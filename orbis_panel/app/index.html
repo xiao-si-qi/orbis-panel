@@ -74,6 +74,23 @@
       <p class="hint">可直接编辑 JSON 后点“应用到编辑器”，再点“保存并发布”。</p>
       <button id="btn-json-apply">应用到编辑器</button>
     </div>
+
+    <hr style="border:0;border-top:1px solid #23262d;margin:18px 0">
+    <div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <strong style="font-size:13px">固件 OTA</strong>
+        <span class="status" id="fw-info">读取中…</span>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
+        <input type="file" id="fw-file" accept=".bin" style="font-size:12px">
+        <input type="text" id="fw-version" placeholder="版本号，如 0.1.2" style="width:140px">
+        <button class="primary" id="btn-fw-upload">上传并发布</button>
+      </div>
+      <p class="hint">
+        上传的是 <code>idf.py build</code> 产出的 <code>orbis.bin</code>（首字节 0xE9）。
+        发布后设备在「System」页点「检查更新」即可下载；版本号与设备当前固件相同则不动。
+      </p>
+    </div>
   </section>
 
   <aside class="panel">
@@ -243,7 +260,48 @@ $("q").addEventListener("input", () => {
   timer = setTimeout(search, 300);
 });
 
+
+async function loadFirmware() {
+  const el = $("fw-info");
+  try {
+    const resp = await fetch("api/firmware");
+    const data = await resp.json();
+    if (!data.ok) { el.textContent = "读取失败"; return; }
+    if (!data.firmware) { el.textContent = "尚未上传固件"; return; }
+    const fw = data.firmware;
+    el.textContent = "当前 v" + fw.version + " · " + Math.round(fw.size / 1024) + " KB · " + fw.sha256.slice(0, 12) + "…";
+  } catch (e) {
+    el.textContent = "读取失败: " + e;
+  }
+}
+
+$("btn-fw-upload").onclick = async () => {
+  const input = $("fw-file");
+  const version = $("fw-version").value.trim();
+  const el = $("fw-info");
+  if (!input.files || !input.files.length) { alert("先选一个 .bin 文件"); return; }
+  if (!version) { alert("填一个版本号，例如 0.1.2"); return; }
+  const file = input.files[0];
+  el.textContent = "上传中… " + Math.round(file.size / 1024) + " KB";
+  try {
+    const resp = await fetch("api/firmware?version=" + encodeURIComponent(version), {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: file,
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      el.textContent = "已发布 v" + data.firmware.version + " · " + Math.round(data.firmware.size / 1024) + " KB";
+    } else {
+      el.textContent = "失败: " + data.error;
+    }
+  } catch (e) {
+    el.textContent = "失败: " + e;
+  }
+};
+
 load().then(() => search());
+loadFirmware();
 </script>
 </body>
 </html>

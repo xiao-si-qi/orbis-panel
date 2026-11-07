@@ -11,7 +11,9 @@ Environment:
 
 import json
 import os
+import hashlib
 import tempfile
+import time
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -21,6 +23,11 @@ LAYOUT_PATH = os.environ.get("LAYOUT_PATH", "/config/www/orbis/layout.json")
 CORE_API = "http://supervisor/core/api"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 PORT = int(os.environ.get("PORT", "8099"))
+
+WWW_DIR = os.path.dirname(LAYOUT_PATH)
+FW_PATH = os.path.join(WWW_DIR, "firmware.bin")
+FW_META = os.path.join(WWW_DIR, "firmware.json")
+MAX_FW = 4 * 1024 * 1024  # app 分区 4MB
 
 DEFAULT_LAYOUT = {
     "version": 1,
@@ -50,6 +57,33 @@ def write_layout(data):
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         json.dump(data, fh, ensure_ascii=False, indent=2)
     os.replace(tmp, LAYOUT_PATH)
+
+
+def read_fw_meta():
+    if os.path.exists(FW_META):
+        try:
+            with open(FW_META, "r", encoding="utf-8") as fh:
+                return json.load(fh)
+        except Exception:  # noqa: BLE001
+            pass
+    return None
+
+
+def write_firmware(data, version):
+    """保存固件并生成 firmware.json（设备端按 version 判断是否需要升级）。"""
+    os.makedirs(WWW_DIR, exist_ok=True)
+    with open(FW_PATH, "wb") as fh:
+        fh.write(data)
+    meta = {
+        "version": version,
+        "file": "firmware.bin",
+        "size": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "uploaded_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+    with open(FW_META, "w", encoding="utf-8") as fh:
+        json.dump(meta, fh, ensure_ascii=False, indent=2)
+    return meta
 
 
 def ha_states():
@@ -127,6 +161,16 @@ class Handler(BaseHTTPRequestHandler):
                     "token": bool(TOKEN),
                 }
             )
+        elif path.endswith("/api/firmware"):
+            meta = read_fw_meta()
+            self.send_json(
+                {
+                    "ok": True,
+                    "firmware": meta,
+                    "present": os.path.exists(FW_PATH),
+                    "max_size": MAX_FW,
+                }
+            )
         elif path.endswith("/api/entities"):
             query = urllib.parse.urlparse(self.path).query
             params = urllib.parse.parse_qs(query)
@@ -163,6 +207,9 @@ class Handler(BaseHTTPRequestHandler):
     # --- POST ------------------------------------------------------------
     def do_POST(self):
         path = self.route()
+        if path.endswith("/api/firmware"):
+            self.handle_firmware_upload()
+            return
         if not path.endswith("/api/layout"):
             self.send_json({"ok": False, "error": "not found"}, 404)
             return
@@ -186,6 +233,38 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"ok": False, "error": str(exc)}, 500)
             return
         self.send_json({"ok": True, "version": data["version"], "layout_path": LAYOUT_PATH})
+
+    def handle_firmware_upload(self):
+        params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        version = (params.get("version") or [""])[0].strip()
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0:
+            self.send_json({"ok": False, "error": "empty body"}, 400)
+            return
+        if length > MAX_FW:
+            self.send_json({"ok": False, "error": "firmware larger than %d bytes" % MAX_FW}, 413)
+            return
+        data = self.rfile.read(length)
+        # ESP32 app image starts with 0xE9; also accept merged images offset by bootloader
+        if not data or data[0] != 0xE9:
+            self.send_json(
+                {"ok": False, "error": "not an ESP32 app image (first byte 0x%02x)" % (data[0] if data else 0)},
+                400,
+            )
+            return
+        if not version:
+            self.send_json({"ok": False, "error": "version is required (e.g. 0.1.1)"}, 400)
+            return
+        try:
+            meta = write_firmware(data, version)
+        except Exception as exc:  # noqa: BLE001
+            self.send_json({"ok": False, "error": str(exc)}, 500)
+            return
+        print("firmware %s saved (%d bytes, sha256 %s...)" % (version, len(data), meta["sha256"][:12]), flush=True)
+        self.send_json({"ok": True, "firmware": meta})
 
     # keep logs short; the Supervisor captures stdout/stderr
     def log_message(self, fmt, *args):

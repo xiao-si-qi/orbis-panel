@@ -12,6 +12,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "esp_lcd_panel_ops.h"
 
 #include "app_settings.h"
@@ -91,6 +92,17 @@ void app_main(void)
 
     ui_home_boot();
     bsp_lvgl_start();
+
+    /* 新固件跑起来（LVGL 已出画面）才算有效：配合 APP_ROLLBACK_ENABLE，
+       如果新固件在到达这一步之前就崩了/断电，下次启动会自动回滚到旧固件 */
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t ota_state;
+    if (running && esp_ota_get_state_partition(running, &ota_state) == ESP_OK &&
+        ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+        if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+            ESP_LOGI(TAG, "firmware marked valid (rollback cancelled)");
+        }
+    }
 
     xTaskCreate(network_task, "net", 8192, NULL, 4, NULL);
 }

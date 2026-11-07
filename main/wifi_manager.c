@@ -277,3 +277,19 @@ esp_err_t wifi_manager_start_provisioning(void)
     ESP_LOGW(TAG, "provisioning AP '%s' up, open http://192.168.4.1", PROV_AP_SSID);
     return ESP_OK;
 }
+
+void wifi_manager_get_ip(char *buf, size_t len)
+{
+    if (buf == NULL || len == 0) {
+        return;
+    }
+    snprintf(buf, len, "-");
+    if (!s_connected) {
+        return;
+    }
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_ip_info_t ip;
+    if (netif != NULL && esp_netif_get_ip_info(netif, &ip) == ESP_OK) {
+        snprintf(buf, len, IPSTR, IP2STR(&ip.ip));
+    }
+}

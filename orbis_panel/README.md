@@ -75,3 +75,26 @@ orbis-panel/
 - 访问 HA 实体列表用的是 Supervisor 注入的 `SUPERVISOR_TOKEN`，令牌不落盘；
 - 屏幕固件读取的是 `/local/orbis/layout.json`，这是 HA 的公开静态目录，
   **不要把敏感信息写进布局文件**。
+
+## 固件 OTA（从插件上传）
+
+编辑器底部有「固件 OTA」区块：
+
+1. `idf.py build` 产出的 `build/orbis.bin`（首字节 `0xE9`）；
+2. 选文件 + 填版本号（要和固件里的 `PROJECT_VER` 一致，例如 `0.1.1`）；
+3. **上传并发布** → 插件把它存成 `/config/www/orbis/firmware.bin`，并生成
+   `/config/www/orbis/firmware.json`：
+
+```json
+{"version":"0.1.1","file":"firmware.bin","size":2693744,"sha256":"3e39…","uploaded_at":"..."}
+```
+
+屏幕的 **System 页**点「检查更新」：拉 `firmware.json`，版本号和当前固件不同就下载
+`firmware.bin`，写入另一个 OTA 槽并重启。
+
+### 断电安全
+
+- 新固件只写**非活动槽**，正在运行的固件不受影响；
+- 只有下载完并 `esp_https_ota_finish()` 成功才会切换启动分区；
+- 开了 `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`：新固件若启动不起来（或没走到
+  `esp_ota_mark_app_valid_cancel_rollback()`），下次启动自动回滚到旧固件。

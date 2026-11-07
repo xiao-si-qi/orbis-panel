@@ -5,6 +5,7 @@ idf_component_register(
         "wifi_manager.c"
         "ha_client.c"
         "layout.c"
+        "ota.c"
         "ui_home.c"
         "bsp_display.c"
         "bsp_touch.c"
@@ -24,6 +25,9 @@ idf_component_register(
         esp_netif
         json
         mbedtls
+        app_update
+        esp_https_ota
+        bootloader_support
         nvs_flash
         esp_lcd_st77916
         cst816s

@@ -26,6 +26,9 @@ esp_err_t wifi_manager_start_provisioning(void);
 /** 当前 RSSI（dBm），未连接返回 0。 */
 int wifi_manager_get_rssi(void);
 
+/** 取当前 STA 的 IPv4 字符串，未连接时写入 "-"。 */
+void wifi_manager_get_ip(char *buf, size_t len);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,10 +1,9 @@
 /**
- * 家庭控制屏界面：完全由 JSON 布局驱动。
+ * 家庭控制屏界面：JSON 布局驱动 + 一个固件内置的「System」页。
  *
- *  - main 启动时先画一张"连接中"的启动页；
- *  - 网络任务拿到布局（HA 的 /local/orbis/layout.json，或自动兜底）后，
- *    调 ui_home_apply()，内部用 lv_async_call 切回 LVGL 任务重建界面；
- *  - 布局里的每个 tile 绑定一个 entity_id，刷新时按 id 去 ha_client 里查缓存。
+ * 页 0..N-1 来自 HA 的 /local/orbis/layout.json（每页最多 4 个 tile）；
+ * 最后一页是固件自己画的系统页：固件版本 / Wi-Fi / IP / 运行时长 / 内存，
+ * 以及「检查更新」按钮（拉 HA 上的 firmware.json，有新版本就下载并重启）。
  */
 
 #include <stdio.h>
@@ -13,25 +12,31 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "esp_app_desc.h"
 #include "esp_log.h"
+#include "esp_system.h"
+#include "esp_timer.h"
 #include "lvgl.h"
 
+#include "app_settings.h"
 #include "bsp_board.h"
 #include "bsp_display.h"
 #include "ha_client.h"
 #include "layout.h"
 #include "lv_font_noto_18_cjk.h"
+#include "ota.h"
 #include "ui_home.h"
 #include "wifi_manager.h"
 
 static const char *TAG = "ui";
+
+#define MAX_PAGES (LAYOUT_MAX_PAGES + 1) /* JSON 页 + System 页 */
 
 #define CARD_W    140
 #define CARD_H    90
 #define CARD_GAP  12
 #define GRID_TOP  84
 #define GRID_LEFT 34
-#define MAX_DOTS  LAYOUT_MAX_PAGES
 
 #define COLOR_BG        lv_color_hex(0x000000)
 #define COLOR_CARD      lv_color_hex(0x1C1C1E)
@@ -41,6 +46,7 @@ static const char *TAG = "ui";
 #define COLOR_MUTED     lv_color_hex(0x8E8E93)
 #define COLOR_OK        lv_color_hex(0x30D158)
 #define COLOR_BAD       lv_color_hex(0xFF453A)
+#define COLOR_ACCENT    lv_color_hex(0x2563EB)
 
 typedef struct {
     lv_obj_t *card;
@@ -53,20 +59,27 @@ typedef struct {
 
 static layout_t s_layout;
 static bool s_layout_valid;
+static int s_json_pages;
 
 static tile_widget_t s_tiles[LAYOUT_MAX_PAGES][LAYOUT_TILES_PER_PAGE];
-static int s_page_tiles[LAYOUT_MAX_PAGES];
+static int s_page_tiles[MAX_PAGES];
 
-static lv_obj_t *s_pages[LAYOUT_MAX_PAGES];
+static lv_obj_t *s_pages[MAX_PAGES];
+static lv_obj_t *s_dots[MAX_PAGES];
 static int s_page_count;
 
 static lv_obj_t *s_title;
 static lv_obj_t *s_wifi_dot;
 static lv_obj_t *s_ha_dot;
-static lv_obj_t *s_dots[MAX_DOTS];
 static lv_obj_t *s_hint;
 static lv_timer_t *s_refresh_timer;
-static lv_obj_t *s_bright_slider;
+
+/* System 页的控件 */
+static lv_obj_t *s_sys_lines[5];
+static lv_obj_t *s_ota_btn;
+static lv_obj_t *s_ota_btn_label;
+static lv_obj_t *s_ota_bar;
+static lv_obj_t *s_ota_status;
 
 static int s_page;
 static QueueHandle_t s_cmd_q;
@@ -79,6 +92,19 @@ typedef struct {
 /* ------------------------------------------------------------------------- */
 /* 翻页                                                                       */
 /* ------------------------------------------------------------------------- */
+
+static bool is_status_page(int page)
+{
+    return s_layout_valid && page == s_json_pages;
+}
+
+static const char *page_title(int page)
+{
+    if (is_status_page(page)) {
+        return "System";
+    }
+    return s_layout.pages[page].name;
+}
 
 static void show_page(int page)
 {
@@ -102,7 +128,7 @@ static void show_page(int page)
         }
     }
     if (s_title) {
-        lv_label_set_text(s_title, s_layout.pages[page].name);
+        lv_label_set_text(s_title, page_title(page));
     }
 }
 
@@ -219,12 +245,111 @@ static lv_obj_t *make_status_dot(lv_obj_t *parent, int x, int y)
 }
 
 /* ------------------------------------------------------------------------- */
+/* System 页                                                                  */
+/* ------------------------------------------------------------------------- */
+
+static void ota_button_cb(lv_event_t *e)
+{
+    (void)e;
+    if (!ota_busy()) {
+        ota_start_check();
+    }
+}
+
+static void build_status_page(lv_obj_t *scr)
+{
+    lv_obj_t *page = lv_obj_create(scr);
+    lv_obj_set_size(page, 360, 360);
+    lv_obj_set_pos(page, 0, 0);
+    lv_obj_set_style_bg_opa(page, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(page, 0, 0);
+    lv_obj_set_style_pad_all(page, 0, 0);
+    lv_obj_remove_flag(page, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(page, gesture_cb, LV_EVENT_GESTURE, NULL);
+
+    for (int i = 0; i < 5; i++) {
+        s_sys_lines[i] = lv_label_create(page);
+        lv_label_set_text(s_sys_lines[i], "--");
+        lv_obj_set_style_text_font(s_sys_lines[i], &lv_font_noto_18_cjk, 0);
+        lv_obj_set_style_text_color(s_sys_lines[i], COLOR_MUTED, 0);
+        lv_obj_set_pos(s_sys_lines[i], 48, 78 + i * 26);
+    }
+
+    s_ota_btn = lv_button_create(page);
+    lv_obj_set_size(s_ota_btn, 200, 44);
+    lv_obj_align(s_ota_btn, LV_ALIGN_TOP_MID, 0, 216);
+    lv_obj_set_style_bg_color(s_ota_btn, COLOR_ACCENT, 0);
+    lv_obj_set_style_radius(s_ota_btn, 14, 0);
+    lv_obj_add_event_cb(s_ota_btn, ota_button_cb, LV_EVENT_CLICKED, NULL);
+
+    s_ota_btn_label = lv_label_create(s_ota_btn);
+    lv_label_set_text(s_ota_btn_label, "检查更新");
+    lv_obj_set_style_text_font(s_ota_btn_label, &lv_font_noto_18_cjk, 0);
+    lv_obj_set_style_text_color(s_ota_btn_label, COLOR_TEXT, 0);
+    lv_obj_center(s_ota_btn_label);
+
+    s_ota_bar = lv_bar_create(page);
+    lv_obj_set_size(s_ota_bar, 220, 10);
+    lv_obj_align(s_ota_bar, LV_ALIGN_TOP_MID, 0, 274);
+    lv_bar_set_range(s_ota_bar, 0, 100);
+    lv_obj_add_flag(s_ota_bar, LV_OBJ_FLAG_HIDDEN);
+
+    s_ota_status = lv_label_create(page);
+    lv_label_set_text(s_ota_status, "");
+    lv_obj_set_style_text_font(s_ota_status, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(s_ota_status, COLOR_MUTED, 0);
+    lv_obj_set_width(s_ota_status, 300);
+    lv_obj_set_style_text_align(s_ota_status, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(s_ota_status, LV_ALIGN_TOP_MID, 0, 292);
+
+    s_pages[s_json_pages] = page;
+}
+
+static void refresh_status_page(void)
+{
+    if (s_sys_lines[0] == NULL) {
+        return;
+    }
+    char buf[64];
+
+    snprintf(buf, sizeof(buf), "固件  v%s", ota_current_version());
+    lv_label_set_text(s_sys_lines[0], buf);
+
+    snprintf(buf, sizeof(buf), "WiFi  %d dBm", wifi_manager_get_rssi());
+    lv_label_set_text(s_sys_lines[1], buf);
+
+    char ip[24] = "-";
+    wifi_manager_get_ip(ip, sizeof(ip));
+    snprintf(buf, sizeof(buf), "地址  %s", ip);
+    lv_label_set_text(s_sys_lines[2], buf);
+
+    const int64_t up_s = esp_timer_get_time() / 1000000;
+    snprintf(buf, sizeof(buf), "运行  %dh%02dm", (int)(up_s / 3600), (int)((up_s % 3600) / 60));
+    lv_label_set_text(s_sys_lines[3], buf);
+
+    snprintf(buf, sizeof(buf), "内存  %d KB", (int)(esp_get_free_heap_size() / 1024));
+    lv_label_set_text(s_sys_lines[4], buf);
+
+    if (ota_busy()) {
+        lv_obj_remove_flag(s_ota_bar, LV_OBJ_FLAG_HIDDEN);
+        const int p = ota_percent();
+        lv_bar_set_value(s_ota_bar, p < 0 ? 0 : p, LV_ANIM_OFF);
+        lv_label_set_text(s_ota_btn_label, p < 0 ? "检查中" : "升级中");
+        lv_label_set_text(s_ota_status, ota_status_text());
+    } else {
+        lv_obj_add_flag(s_ota_bar, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(s_ota_btn_label, "检查更新");
+        lv_label_set_text(s_ota_status, ota_status_text());
+    }
+}
+
+/* ------------------------------------------------------------------------- */
 /* 刷新                                                                       */
 /* ------------------------------------------------------------------------- */
 
 static void refresh_values(void)
 {
-    for (int p = 0; p < s_page_count; p++) {
+    for (int p = 0; p < s_json_pages; p++) {
         for (int i = 0; i < s_page_tiles[p]; i++) {
             tile_widget_t *w = &s_tiles[p][i];
             const ha_entity_t *e = ha_client_find(w->entity);
@@ -289,9 +414,10 @@ static void refresh_timer_cb(lv_timer_t *t)
     }
 
     refresh_values();
+    refresh_status_page();
 
     if (s_hint) {
-        if (s_layout_valid && s_page_count > 0) {
+        if (s_layout_valid) {
             lv_obj_add_flag(s_hint, LV_OBJ_FLAG_HIDDEN);
         } else {
             lv_label_set_text(s_hint, wifi_manager_is_connected() ? "loading layout..." : "connecting Wi-Fi...");
@@ -333,15 +459,20 @@ static void build_ui(void)
     memset(s_dots, 0, sizeof(s_dots));
     memset(s_tiles, 0, sizeof(s_tiles));
     memset(s_page_tiles, 0, sizeof(s_page_tiles));
-    s_page_count = s_layout.page_count;
+    memset(s_sys_lines, 0, sizeof(s_sys_lines));
+
+    s_json_pages = s_layout.page_count;
+    s_page_count = s_json_pages + 1; /* 加 System 页 */
     s_title = NULL;
     s_wifi_dot = NULL;
     s_ha_dot = NULL;
-    s_bright_slider = NULL;
+    s_ota_btn = NULL;
+    s_ota_bar = NULL;
+    s_ota_status = NULL;
 
     /* 标题 */
     s_title = lv_label_create(scr);
-    lv_label_set_text(s_title, s_page_count > 0 ? s_layout.pages[0].name : s_layout.title);
+    lv_label_set_text(s_title, page_title(0));
     lv_obj_set_style_text_color(s_title, COLOR_TEXT, 0);
     lv_obj_set_style_text_font(s_title, &lv_font_montserrat_24, 0);
     lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 18);
@@ -361,8 +492,8 @@ static void build_ui(void)
     lv_obj_set_style_text_font(ha_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_pos(ha_lbl, 209, 56);
 
-    /* 页面与 tile */
-    for (int p = 0; p < s_page_count; p++) {
+    /* JSON 页 */
+    for (int p = 0; p < s_json_pages; p++) {
         lv_obj_t *page = lv_obj_create(scr);
         lv_obj_set_size(page, 360, 360);
         lv_obj_set_pos(page, 0, 0);
@@ -380,15 +511,18 @@ static void build_ui(void)
         }
     }
 
+    /* System 页 */
+    build_status_page(scr);
+
     /* 翻页圆点 */
     if (s_page_count > 1) {
-        for (int i = 0; i < s_page_count && i < MAX_DOTS; i++) {
+        for (int i = 0; i < s_page_count; i++) {
             int cx = 180 + (int)((i * 2 - (s_page_count - 1)) * 11); /* 间距 22 */
             lv_obj_t *hit = lv_obj_create(scr);
             lv_obj_set_size(hit, 24, 24);
             lv_obj_set_style_bg_opa(hit, LV_OPA_TRANSP, 0);
             lv_obj_set_style_border_width(hit, 0, 0);
-            lv_obj_set_pos(hit, cx - 12, 288);
+            lv_obj_set_pos(hit, cx - 12, 318);
             lv_obj_add_flag(hit, LV_OBJ_FLAG_CLICKABLE);
             lv_obj_add_event_cb(hit, dot_clicked_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
@@ -411,6 +545,7 @@ static void build_ui(void)
 
     show_page(0);
     refresh_values();
+    refresh_status_page();
 
     if (s_refresh_timer) {
         lv_timer_delete(s_refresh_timer);
@@ -418,7 +553,7 @@ static void build_ui(void)
     s_refresh_timer = lv_timer_create(refresh_timer_cb, 500, NULL);
 
     lv_obj_add_event_cb(scr, gesture_cb, LV_EVENT_GESTURE, NULL);
-    ESP_LOGI(TAG, "UI built: %d page(s)", s_page_count);
+    ESP_LOGI(TAG, "UI built: %d page(s) + system", s_json_pages);
 }
 
 static void apply_async_cb(void *arg)
@@ -461,6 +596,5 @@ void ui_home_apply(const layout_t *layout)
     }
     s_layout = *layout;
     s_layout_valid = true;
-    /* 从网络任务调用：切回 LVGL 上下文再重建 */
     lv_async_call(apply_async_cb, NULL);
 }
