@@ -11,6 +11,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_lcd_panel_ops.h"
@@ -91,7 +92,9 @@ static void network_task(void *arg)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "Orbis Panel booting (JC3636W518)");
+    ESP_LOGI(TAG, "Orbis Panel booting (JC3636W518), internal heap %d KB, psram %d KB",
+             (int)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+             (int)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 
     ESP_ERROR_CHECK(app_settings_init());
 

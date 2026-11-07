@@ -40,6 +40,9 @@ esp_err_t ha_client_refresh_at(int idx);
 /** 执行动作：service 传 "toggle" / "turn_on" / "turn_off"。 */
 esp_err_t ha_client_action(const char *entity_id, const char *service);
 
+/** HA REST 是否可达（最近一次请求成功）。界面上的 HA 圆点用它。 */
+bool ha_client_online(void);
+
 /** 启动后台轮询。 */
 void ha_client_start_poll(void);
 

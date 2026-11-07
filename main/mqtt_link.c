@@ -279,8 +279,8 @@ esp_err_t mqtt_link_start(void)
         .session.last_will.qos = 0,
         .session.last_will.retain = 1,
         .session.keepalive = 30,
-        .buffer.size = 8192,
-        .buffer.out_size = 8192,
+        .buffer.size = 6144,
+        .buffer.out_size = 1024,
     };
 
     s_client = esp_mqtt_client_init(&mqtt_cfg);

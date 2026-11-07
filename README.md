@@ -217,6 +217,21 @@ backups\jc3636w518\MANIFEST.md
   （[PROTOCOL.md](https://github.com/xiao-si-qi/switchyard/blob/main/docs/PROTOCOL.md)）。
   本工程的布局与固件文件默认就从它约定的 `/local/orbis/` 目录读取。
 
+## 内部 RAM 与 TLS
+
+老版本出现过"WiFi 正常但 HA 红点"：TLS 握手需要 ~40–50 KB **连续内部 RAM**，
+当时只剩 41 KB，`esp_http_client_perform()` 直接返回 `ESP_ERR_HTTP_CONNECT`。
+当前把内部 RAM 腾到了 ~69 KB：
+
+| 项 | 之前 | 现在 |
+|---|---|---|
+| LVGL 缓冲 | 2 × 40 行（57 KB）| 2 × 20 行（29 KB）|
+| MQTT 收发缓冲 | 8 KB / 8 KB | 6 KB / 1 KB |
+| mbedTLS | 静态缓冲 | `CONFIG_MBEDTLS_DYNAMIC_BUFFER` |
+
+排查方法：串口日志里 `HA probe -> 200 (internal heap 69 KB)`，
+失败时会打印 `GET ... failed: ESP_ERR_HTTP_CONNECT (internal heap xx KB)`。
+
 ## 备注
 
 - 屏幕方向/镜像：`bsp_display.c` 里 `esp_lcd_panel_invert_color(true)`，

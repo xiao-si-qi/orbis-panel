@@ -76,7 +76,7 @@ static lv_obj_t *s_hint;
 static lv_timer_t *s_refresh_timer;
 
 /* System 页的控件 */
-static lv_obj_t *s_sys_lines[6];
+static lv_obj_t *s_sys_lines[5];
 static lv_obj_t *s_ota_btn;
 static lv_obj_t *s_ota_btn_label;
 static lv_obj_t *s_ota_bar;
@@ -268,17 +268,17 @@ static void build_status_page(lv_obj_t *scr)
     lv_obj_remove_flag(page, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(page, gesture_cb, LV_EVENT_GESTURE, NULL);
 
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 5; i++) {
         s_sys_lines[i] = lv_label_create(page);
         lv_label_set_text(s_sys_lines[i], "--");
         lv_obj_set_style_text_font(s_sys_lines[i], &lv_font_noto_18_cjk, 0);
         lv_obj_set_style_text_color(s_sys_lines[i], COLOR_MUTED, 0);
-        lv_obj_set_pos(s_sys_lines[i], 48, 74 + i * 24);
+        lv_obj_set_pos(s_sys_lines[i], 48, 74 + i * 26);
     }
 
     s_ota_btn = lv_button_create(page);
     lv_obj_set_size(s_ota_btn, 200, 44);
-    lv_obj_align(s_ota_btn, LV_ALIGN_TOP_MID, 0, 216);
+    lv_obj_align(s_ota_btn, LV_ALIGN_TOP_MID, 0, 214);
     lv_obj_set_style_bg_color(s_ota_btn, COLOR_ACCENT, 0);
     lv_obj_set_style_radius(s_ota_btn, 14, 0);
     lv_obj_add_event_cb(s_ota_btn, ota_button_cb, LV_EVENT_CLICKED, NULL);
@@ -316,12 +316,12 @@ static void refresh_status_page(void)
     snprintf(buf, sizeof(buf), "固件  v%s", ota_current_version());
     lv_label_set_text(s_sys_lines[0], buf);
 
-    snprintf(buf, sizeof(buf), "WiFi  %d dBm", wifi_manager_get_rssi());
+    snprintf(buf, sizeof(buf), "MQTT  %s", mqtt_link_connected() ? "已连接" : "未连接");
     lv_label_set_text(s_sys_lines[1], buf);
 
     char ip[24] = "-";
     wifi_manager_get_ip(ip, sizeof(ip));
-    snprintf(buf, sizeof(buf), "地址  %s", ip);
+    snprintf(buf, sizeof(buf), "WiFi  %d dBm · %s", wifi_manager_get_rssi(), ip);
     lv_label_set_text(s_sys_lines[2], buf);
 
     const int64_t up_s = esp_timer_get_time() / 1000000;
@@ -330,9 +330,6 @@ static void refresh_status_page(void)
 
     snprintf(buf, sizeof(buf), "内存  %d KB", (int)(esp_get_free_heap_size() / 1024));
     lv_label_set_text(s_sys_lines[4], buf);
-
-    snprintf(buf, sizeof(buf), "MQTT  %s", mqtt_link_connected() ? "已连接" : "未连接");
-    lv_label_set_text(s_sys_lines[5], buf);
 
     if (ota_busy()) {
         lv_obj_remove_flag(s_ota_bar, LV_OBJ_FLAG_HIDDEN);
@@ -405,16 +402,8 @@ static void refresh_timer_cb(lv_timer_t *t)
         lv_obj_set_style_bg_color(s_wifi_dot, wifi_manager_is_connected() ? COLOR_OK : COLOR_BAD, 0);
     }
 
-    bool any_fresh = false;
-    for (int i = 0; i < ha_client_count(); i++) {
-        const ha_entity_t *e = ha_client_at(i);
-        if (e && e->fresh) {
-            any_fresh = true;
-            break;
-        }
-    }
     if (s_ha_dot) {
-        lv_obj_set_style_bg_color(s_ha_dot, any_fresh ? COLOR_OK : COLOR_BAD, 0);
+        lv_obj_set_style_bg_color(s_ha_dot, ha_client_online() ? COLOR_OK : COLOR_BAD, 0);
     }
 
     refresh_values();

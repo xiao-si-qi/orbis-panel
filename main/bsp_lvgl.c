@@ -14,7 +14,7 @@
 
 static const char *TAG = "bsp_lvgl";
 
-#define BUF_LINES   40  /* 40 x 360 x 2B = 28.8KB per buffer, two buffers */
+#define BUF_LINES   20  /* 40 x 360 x 2B = 28.8KB per buffer, two buffers */
 
 static esp_lcd_panel_handle_t s_panel;
 static lv_display_t *s_disp;

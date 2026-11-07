@@ -17,6 +17,7 @@
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
 #include "esp_heap_caps.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "sdkconfig.h"
 
@@ -36,6 +37,8 @@ static char *s_buf;
 static size_t s_buf_len;
 
 static ha_entity_t s_entities[HA_MAX_ENTITIES];
+static volatile bool s_online;
+static int s_fail_count;
 static int s_count;
 
 /* ------------------------------------------------------------------------- */
@@ -93,10 +96,20 @@ static int http_get(const char *url)
     s_buf[0] = '\0';
 
     int status = -1;
-    if (esp_http_client_perform(s_client) == ESP_OK) {
+    esp_err_t err = esp_http_client_perform(s_client);
+    if (err == ESP_OK) {
         status = esp_http_client_get_status_code(s_client);
+    } else {
+        ESP_LOGW(TAG, "GET %s failed: %s (internal heap %d KB)", url, esp_err_to_name(err),
+                 (int)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
     }
     xSemaphoreGive(s_lock);
+    if (status > 0) {
+        s_online = true;
+        s_fail_count = 0;
+    } else if (++s_fail_count >= 3) {
+        s_online = false;
+    }
     if (status != 200) {
         ESP_LOGW(TAG, "GET %s -> %d", url, status);
     }
@@ -121,8 +134,12 @@ static int http_post_service(const char *domain, const char *service, const char
     esp_http_client_set_post_field(s_client, body, (int)strlen(body));
 
     int status = -1;
-    if (esp_http_client_perform(s_client) == ESP_OK) {
+    esp_err_t err = esp_http_client_perform(s_client);
+    if (err == ESP_OK) {
         status = esp_http_client_get_status_code(s_client);
+    } else {
+        ESP_LOGW(TAG, "GET %s failed: %s (internal heap %d KB)", url, esp_err_to_name(err),
+                 (int)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
     }
     xSemaphoreGive(s_lock);
     ESP_LOGI(TAG, "%s/%s %s -> %d", domain, service, entity_id, status);
@@ -372,11 +389,26 @@ esp_err_t ha_client_action(const char *entity_id, const char *service)
 /* 轮询                                                                       */
 /* ------------------------------------------------------------------------- */
 
+bool ha_client_online(void)
+{
+    return s_online;
+}
+
 static void poll_task(void *arg)
 {
     (void)arg;
     vTaskDelay(pdMS_TO_TICKS(1500));
     while (true) {
+        if (s_count == 0) {
+            /* 还没收到布局，没有实体可刷：只探测 HA 是否可达 */
+            char url[APP_HA_URL_MAX + 16];
+            snprintf(url, sizeof(url), "%s/api/", s_base);
+            int st = http_get(url);
+            ESP_LOGI(TAG, "HA probe -> %d (internal heap %d KB)", st,
+                     (int)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
+            vTaskDelay(pdMS_TO_TICKS(30000));
+            continue;
+        }
         for (int i = 0; i < s_count; i++) {
             ha_client_refresh_at(i);
         }
