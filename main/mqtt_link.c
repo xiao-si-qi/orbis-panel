@@ -42,6 +42,7 @@ static char s_topic_avail[96];
 static char s_topic_cmd[96];
 static char s_topic_event[96];
 static char s_topic_cfg[96];
+static char s_topic_meta[96];
 static char s_client_id[64];
 static uint32_t s_last_seq;
 
@@ -100,6 +101,20 @@ void mqtt_link_publish_state(void)
              mqtt_link_device_id(), ota_current_version(), ip, wifi_manager_get_rssi(),
              (long long)up_s, (int)(esp_get_free_heap_size() / 1024), (long long)time(NULL));
     publish_retained(s_topic_state, json);
+}
+
+/** 能力声明（retained）：告诉 switchyard 这台设备会什么 */
+void mqtt_link_publish_meta(void)
+{
+    if (!s_connected) {
+        return;
+    }
+    char json[256];
+    snprintf(json, sizeof(json),
+             "{\"type\":\"screen\",\"caps\":[\"layout\",\"ota\",\"reboot\",\"brightness\"],"
+             "\"display\":{\"w\":%d,\"h\":%d},\"fw\":\"%s\"}",
+             360, 360, ota_current_version());
+    publish_retained(s_topic_meta, json);
 }
 
 void mqtt_link_publish_event(const char *json)
@@ -194,6 +209,7 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t event_i
         s_connected = true;
         ESP_LOGI(TAG, "connected to broker");
         publish_retained(s_topic_avail, "online");
+        mqtt_link_publish_meta();
         mqtt_link_publish_state();
         esp_mqtt_client_subscribe(s_client, s_topic_cmd, 0);
         esp_mqtt_client_subscribe(s_client, s_topic_cfg, 0);
@@ -263,6 +279,7 @@ esp_err_t mqtt_link_start(void)
     snprintf(s_topic_cmd, sizeof(s_topic_cmd), "switchyard/%s/cmd", mqtt_link_device_id());
     snprintf(s_topic_event, sizeof(s_topic_event), "switchyard/%s/event", mqtt_link_device_id());
     snprintf(s_topic_cfg, sizeof(s_topic_cfg), "switchyard/%s/cfg", mqtt_link_device_id());
+    snprintf(s_topic_meta, sizeof(s_topic_meta), "switchyard/%s/meta", mqtt_link_device_id());
     snprintf(s_client_id, sizeof(s_client_id), "orbis-%s", mqtt_link_device_id());
     s_last_seq = load_seq();
 
