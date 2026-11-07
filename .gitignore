@@ -8,5 +8,5 @@ cmake-build-*/
 .vscode/.env
 main/secrets.h
 *.log
-jc3636_panel/app/__pycache__/
+orbis_panel/app/__pycache__/
 *.pyc

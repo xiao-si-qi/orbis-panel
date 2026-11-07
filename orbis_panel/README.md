@@ -1,12 +1,12 @@
-# JC3636 控制屏 · Home Assistant 插件（add-on）
+# Orbis 控制屏 · Home Assistant 插件（add-on）
 
 在 HA 网页里可视化编辑 JC3636W518 控制屏的 JSON 布局，保存后写到
-`/config/www/jc3636/layout.json`，屏幕开机时从这个地址读取布局。
+`/config/www/orbis/layout.json`，屏幕开机时从这个地址读取布局。
 
 ```
 jc3636w518/ha_addon/
 ├── repository.yaml              # add-on 仓库描述（把这个目录作为仓库添加）
-└── jc3636_panel/
+└── orbis_panel/
     ├── config.yaml              # 插件元数据（ingress 面板、映射 /config）
     ├── build.yaml               # 三种架构的基础镜像
     ├── Dockerfile
@@ -22,20 +22,20 @@ jc3636w518/ha_addon/
 1. 把这个仓库推到 GitHub（`ha_addon/repository.yaml` 要在仓库根，或直接把 `ha_addon/` 单独推一个仓库）；
 2. HA → **设置 → 加载项（Add-ons）→ 加载项商店 → 右上角 ⋮ → 仓库**，
    添加 `https://github.com/<你>/<仓库>`；
-3. 商店里出现 **JC3636 Panel Editor**，安装、启动；
-4. 左侧栏出现 **JC3636 控制屏** 面板。
+3. 商店里出现 **Orbis Panel Editor**，安装、启动；
+4. 左侧栏出现 **Orbis 控制屏** 面板。
 
 ### 方式 B：不用 GitHub（本地插件）
 
-1. 用 Samba / File Editor 把 `jc3636_panel/` 整个目录拷到 HA 的 `/addons/` 下；
+1. 用 Samba / File Editor 把 `orbis_panel/` 整个目录拷到 HA 的 `/addons/` 下；
 2. HA → 设置 → 加载项 → 右上角 ⋮ → **检查更新**（或重启 HA），
-   商店最下面"本地加载项"里出现 **JC3636 Panel Editor**；
+   商店最下面"本地加载项"里出现 **Orbis Panel Editor**；
 3. 安装、启动，左侧栏出现面板。
 
 ### 不是 HA OS / Supervised（Home Assistant Container）
 
 没有 add-on 机制，直接用 File Editor / Samba 编辑
-`/config/www/jc3636/layout.json` 即可，格式见 [`../docs/layout.example.json`](../docs/layout.example.json)。
+`/config/www/orbis/layout.json` 即可，格式见 [`../docs/layout.example.json`](../docs/layout.example.json)。
 也可以在本机跑这个 Flask 应用（`pip install flask requests`，设置 `LAYOUT_PATH`），
 但 `SUPERVISOR_TOKEN` 在容器外拿不到，实体列表功能会不可用（布局仍可编辑）。
 
@@ -71,7 +71,7 @@ jc3636w518/ha_addon/
 
 ## 安全说明
 
-- 插件只读写 `/config/www/jc3636/layout.json`，不接触 HA 的配置或数据库；
+- 插件只读写 `/config/www/orbis/layout.json`，不接触 HA 的配置或数据库；
 - 访问 HA 实体列表用的是 Supervisor 注入的 `SUPERVISOR_TOKEN`，令牌不落盘；
-- 屏幕固件读取的是 `/local/jc3636/layout.json`，这是 HA 的公开静态目录，
+- 屏幕固件读取的是 `/local/orbis/layout.json`，这是 HA 的公开静态目录，
   **不要把敏感信息写进布局文件**。

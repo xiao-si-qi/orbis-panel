@@ -35,7 +35,7 @@ typedef struct {
     layout_page_t pages[LAYOUT_MAX_PAGES];
 } layout_t;
 
-/** 从 `<ha_url>/local/jc3636/layout.json` 拉取布局。 */
+/** 从 `<ha_url>/local/orbis/layout.json` 拉取布局。 */
 esp_err_t layout_fetch(layout_t *out);
 
 /** 用 ha_client 自动挑选的结果拼一个兜底布局（每页最多 4 个）。 */

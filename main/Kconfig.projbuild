@@ -1,4 +1,4 @@
-menu "JC3636 control panel"
+menu "Orbis panel"
 
     config APP_POLL_INTERVAL_S
         int "Home Assistant poll interval (seconds)"

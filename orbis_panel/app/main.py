@@ -1,11 +1,11 @@
-"""JC3636 Panel Editor — Home Assistant add-on.
+"""Orbis Panel Editor — Home Assistant add-on.
 
 Serves a small web editor for the JSON layout of the JC3636W518 control panel
 and writes it to Home Assistant's www folder, so the panel can fetch it from
-`<ha>/local/jc3636/layout.json`.
+`<ha>/local/orbis/layout.json`.
 
 Environment:
-    LAYOUT_PATH       where to write the layout (default /config/www/jc3636/layout.json)
+    LAYOUT_PATH       where to write the layout (default /config/www/orbis/layout.json)
     SUPERVISOR_TOKEN  injected by the Supervisor, used to list entities
 """
 
@@ -17,7 +17,7 @@ import requests
 from flask import Flask, jsonify, request, send_from_directory
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-LAYOUT_PATH = os.environ.get("LAYOUT_PATH", "/config/www/jc3636/layout.json")
+LAYOUT_PATH = os.environ.get("LAYOUT_PATH", "/config/www/orbis/layout.json")
 CORE_API = "http://supervisor/core/api"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 

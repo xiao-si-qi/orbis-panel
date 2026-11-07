@@ -1,8 +1,8 @@
 /**
- * JSON 布局：从 Home Assistant 的 `/local/jc3636/layout.json` 拉取页面/卡片定义。
+ * JSON 布局：从 Home Assistant 的 `/local/orbis/layout.json` 拉取页面/卡片定义。
  *
- * 文件放到 HA 的 `config/www/jc3636/layout.json`，访问地址就是
- * `<ha_url>/local/jc3636/layout.json`（HA 的 /local/ 是公开静态目录，不需要令牌）。
+ * 文件放到 HA 的 `config/www/orbis/layout.json`，访问地址就是
+ * `<ha_url>/local/orbis/layout.json`（HA 的 /local/ 是公开静态目录，不需要令牌）。
  *
  * 格式：
  * {
@@ -36,7 +36,7 @@
 
 static const char *TAG = "layout";
 
-#define LAYOUT_URL_SUFFIX "/local/jc3636/layout.json"
+#define LAYOUT_URL_SUFFIX "/local/orbis/layout.json"
 #define LAYOUT_BODY_MAX   (16 * 1024)
 
 static char s_body[LAYOUT_BODY_MAX];

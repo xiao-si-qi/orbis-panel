@@ -17,7 +17,7 @@
 
 static const char *TAG = "wifi";
 
-#define PROV_AP_SSID "JC3636-Setup"
+#define PROV_AP_SSID "Orbis-Setup"
 
 static volatile bool s_connected;
 static volatile int s_retry;
@@ -134,13 +134,13 @@ int wifi_manager_get_rssi(void)
 static const char *PROV_HTML_FMT =
     "<!DOCTYPE html><html><head><meta charset='utf-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<title>JC3636 控制屏配网</title><style>"
+    "<title>Orbis 控制屏配网</title><style>"
     "body{font-family:system-ui,sans-serif;margin:0;padding:24px;background:#111;color:#eee}"
     "h1{font-size:20px;margin:0 0 16px}p{color:#aaa;font-size:13px}"
     "label{display:block;margin:14px 0 6px;font-size:13px;color:#aaa}"
     "input{width:100%%;padding:10px;border-radius:8px;border:1px solid #333;background:#1b1b1b;color:#eee;box-sizing:border-box}"
     "button{margin-top:22px;width:100%%;padding:12px;border:0;border-radius:8px;background:#3b82f6;color:#fff;font-size:16px}"
-    "</style></head><body><h1>JC3636 控制屏</h1>"
+    "</style></head><body><h1>Orbis 控制屏</h1>"
     "<p>填写家里 Wi-Fi 和 Home Assistant 连接信息，保存后设备自动重启。</p>"
     "<form method='post' action='/save'>"
     "<label>Wi-Fi 名称 (SSID)</label><input name='ssid' value='%s'>"

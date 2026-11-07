@@ -1,4 +1,11 @@
-# JC3636W518 · Home Assistant 家庭控制屏
+# Orbis Panel · JC3636W518 圆屏 Home Assistant 控制屏
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v5.5.4-red.svg)](https://docs.espressif.com/projects/esp-idf/)
+[![Target](https://img.shields.io/badge/target-ESP32--S3-8A2BE2.svg)](https://www.espressif.com/en/products/socs/esp32-s3)
+[![Home Assistant Add-on](https://img.shields.io/badge/Home%20Assistant-add--on-41BDF5.svg)](https://github.com/xiao-si-qi/orbis-panel)
+
+> 硬件：GUITION **太极小派 JC3636W518**（2024-07 批次）。本项目不是厂家官方项目。
 
 基于 **ESP32-S3R8 + 1.85" 圆形 360×360 ST77916** 模组的 Home Assistant 触屏控制面板。
 点卡片直接调用 HA 服务（`light.toggle` / `switch.toggle` / `fan.toggle` …），状态每 5 秒轮询刷新。
@@ -46,7 +53,7 @@
 ## 目录结构
 
 ```
-jc3636w518/
+orbis-panel/
 ├── CMakeLists.txt
 ├── partitions.csv              # 16MB: app 4MB + assets(FAT) 11MB
 ├── sdkconfig.defaults          # 16MB QIO / Octal PSRAM 80M / LVGL 9 配置
@@ -68,7 +75,7 @@ jc3636w518/
 │   └── Kconfig.projbuild       # menuconfig: 轮询间隔、实体槽位
 ├── ha_addon/                   # HA 插件：网页里编辑布局 JSON
 │   ├── repository.yaml
-│   └── jc3636_panel/
+│   └── orbis_panel/
 ├── docs/
 │   ├── layout.example.json     # 布局示例
 │   └── FONT.md                 # 字库来源/许可/重新生成
@@ -105,9 +112,9 @@ LVGL 通过组件管理器解析（本机组件仓库里有 9.2.x，可离线）
 
 首次开机时会播种进 NVS。之后要改配置，两种办法：
 
-1. **配网页面**：设备连不上 Wi-Fi 时会开热点 `JC3636-Setup`，
+1. **配网页面**：设备连不上 Wi-Fi 时会开热点 `Orbis-Setup`，
    手机连上后打开 <http://192.168.4.1>，填 SSID / 密码 / HA 地址 / 令牌，保存后自动重启。
-2. **菜单配置**：`idf.py menuconfig` → `JC3636 control panel`，可指定 4 个实体槽位
+2. **菜单配置**：`idf.py menuconfig` → `Orbis panel`，可指定 4 个实体槽位
    （`light.xxx` 这类 entity_id），留空则自动从 `/api/states` 里挑前 4 个可控实体。
 
 ## Home Assistant 端准备
@@ -127,10 +134,10 @@ LVGL 通过组件管理器解析（本机组件仓库里有 9.2.x，可离线）
 开机时固件会先尝试从 HA 拉布局：
 
 ```
-<ha_url>/local/jc3636/layout.json
+<ha_url>/local/orbis/layout.json
 ```
 
-（对应 HA 的 `config/www/jc3636/layout.json`，`/local/` 是公开静态目录，不需要令牌。）
+（对应 HA 的 `config/www/orbis/layout.json`，`/local/` 是公开静态目录，不需要令牌。）
 
 ```json
 {
@@ -158,9 +165,9 @@ LVGL 通过组件管理器解析（本机组件仓库里有 9.2.x，可离线）
 - **拉不到布局文件**（404 / 离线）时退回自动挑选：灯 → 风扇/布尔/开关 → 场景 → 传感器；
 - 改完布局**下次开机生效**（目前没有热重载）。
 
-`ha_addon/` 里有一个 Home Assistant 插件（**JC3636 Panel Editor**），
+`ha_addon/` 里有一个 Home Assistant 插件（**Orbis Panel Editor**），
 在 HA 网页里用「页面 tab + 卡片 + 实体搜索」编辑这个 JSON 并一键发布到
-`/config/www/jc3636/layout.json`，不需要手改文件。安装见 [ha_addon/README.md](ha_addon/README.md)。
+`/config/www/orbis/layout.json`，不需要手改文件。安装见 [ha_addon/README.md](ha_addon/README.md)。
 
 ## 已实现 / 待办
 

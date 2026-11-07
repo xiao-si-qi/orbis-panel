@@ -2,7 +2,7 @@
  * 家庭控制屏界面：完全由 JSON 布局驱动。
  *
  *  - main 启动时先画一张"连接中"的启动页；
- *  - 网络任务拿到布局（HA 的 /local/jc3636/layout.json，或自动兜底）后，
+ *  - 网络任务拿到布局（HA 的 /local/orbis/layout.json，或自动兜底）后，
  *    调 ui_home_apply()，内部用 lv_async_call 切回 LVGL 任务重建界面；
  *  - 布局里的每个 tile 绑定一个 entity_id，刷新时按 id 去 ha_client 里查缓存。
  */
