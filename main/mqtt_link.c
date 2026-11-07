@@ -22,9 +22,11 @@
 #include "nvs.h"
 
 #include "app_settings.h"
+#include "bg_image.h"
 #include "bsp_display.h"
 #include "ha_client.h"
 #include "layout.h"
+#include "log_buffer.h"
 #include "mqtt_link.h"
 #include "ui_home.h"
 #include "ota.h"
@@ -43,6 +45,8 @@ static char s_topic_cmd[96];
 static char s_topic_event[96];
 static char s_topic_cfg[96];
 static char s_topic_meta[96];
+static char s_topic_diag[96];
+static char s_topic_log[96];
 static char s_client_id[64];
 static uint32_t s_last_seq;
 
@@ -85,6 +89,15 @@ static void publish_retained(const char *topic, const char *payload)
     }
 }
 
+/** 发送一条非 retained 消息（日志这类"看完即弃"的内容）。 */
+static void publish_plain(const char *topic, const char *payload)
+{
+    if (!s_connected || s_client == NULL) {
+        return;
+    }
+    esp_mqtt_client_publish(s_client, topic, payload, 0, 0, 0);
+}
+
 void mqtt_link_publish_state(void)
 {
     if (!s_connected) {
@@ -110,11 +123,13 @@ void mqtt_link_publish_meta(void)
         return;
     }
     char json[320];
+    const app_settings_t *cfg = app_settings_get();
+    const char *display = (cfg->device_name[0] != '\0') ? cfg->device_name : "圆屏";
     snprintf(json, sizeof(json),
-             "{\"type\":\"screen\",\"caps\":[\"fw\",\"rssi\",\"uptime\",\"online\",\"layout\",\"ota\",\"reboot\",\"brightness\"],"
-             "\"display\":{\"w\":%d,\"h\":%d},\"fw\":\"%s\","
-             "\"name\":\"圆屏\",\"model\":\"JC3636W518\"}",
-             360, 360, ota_current_version());
+             "{\"type\":\"screen\",\"caps\":[\"fw\",\"rssi\",\"uptime\",\"online\",\"layout\",\"ota\",\"reboot\",\"brightness\",\"log\",\"background\"],"
+             "\"display\":{\"w\":%d,\"h\":%d,\"formats\":[\"jpeg\"],\"fit\":[\"cover\",\"contain\"]},\"fw\":\"%s\","
+             "\"name\":\"%s\",\"model\":\"JC3636W518\"}",
+             360, 360, ota_current_version(), display);
     publish_retained(s_topic_meta, json);
 }
 
@@ -143,6 +158,7 @@ static void apply_layout_json(const char *json)
     }
     ha_client_fetch_all();
     ui_home_apply(layout);
+    bg_image_apply_json(json);      /* 背景图/轮播 */
     free(layout);
     mqtt_link_publish_event("{\"ev\":\"cfg_applied\"}");
     ESP_LOGI(TAG, "cfg applied: %d page(s)", layout->page_count);
@@ -188,6 +204,22 @@ static void handle_cmd(const char *payload)
         /* 让设备立刻上报一次（switchyard 的「检查更新」用，不用等 30s 周期） */
         mqtt_link_publish_state();
         mqtt_link_publish_meta();
+    } else if (strcmp(cmd, "log") == 0) {
+        /* 按需抓日志：非 retained，发一次就完 */
+        const cJSON *jlines = cJSON_GetObjectItemCaseSensitive(root, "lines");
+        int lines = cJSON_IsNumber(jlines) ? jlines->valueint : 40;
+        if (lines <= 0 || lines > 40) {
+            lines = 40;
+        }
+        char *dump = malloc(4096);
+        if (dump != NULL) {
+            const size_t n = log_buffer_dump(dump, 4096, lines);
+            if (n > 0) {
+                publish_plain(s_topic_log, dump);
+                ESP_LOGI(TAG, "已发送 %u 字节日志", (unsigned)n);
+            }
+            free(dump);
+        }
     } else if (strcmp(cmd, "get") == 0) {
         /* switchyard 想回读设备当前的布局：把 NVS 里那份原样发回 cfg 主题 */
         const cJSON *jkey = cJSON_GetObjectItemCaseSensitive(root, "key");
@@ -283,6 +315,17 @@ static void state_task(void *arg)
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(STATE_PERIOD_MS));
         mqtt_link_publish_state();
+
+        /* 错误摘要：有就发，但 1 分钟内只发一条 */
+        static int64_t s_last_diag_ms = 0;
+        const int64_t now = esp_timer_get_time() / 1000;
+        if ((now - s_last_diag_ms) >= 60000) {
+            char diag[512];
+            if (log_buffer_take_diag(diag, sizeof(diag))) {
+                publish_retained(s_topic_diag, diag);
+                s_last_diag_ms = now;
+            }
+        }
     }
 }
 
@@ -299,7 +342,10 @@ esp_err_t mqtt_link_start(void)
     snprintf(s_topic_cmd, sizeof(s_topic_cmd), "switchyard/%s/cmd", mqtt_link_device_id());
     snprintf(s_topic_event, sizeof(s_topic_event), "switchyard/%s/event", mqtt_link_device_id());
     snprintf(s_topic_cfg, sizeof(s_topic_cfg), "switchyard/%s/cfg", mqtt_link_device_id());
+    log_buffer_init();
     snprintf(s_topic_meta, sizeof(s_topic_meta), "switchyard/%s/meta", mqtt_link_device_id());
+    snprintf(s_topic_diag, sizeof(s_topic_diag), "switchyard/%s/diag", mqtt_link_device_id());
+    snprintf(s_topic_log, sizeof(s_topic_log), "switchyard/%s/log", mqtt_link_device_id());
     snprintf(s_client_id, sizeof(s_client_id), "orbis-%s", mqtt_link_device_id());
     s_last_seq = load_seq();
 

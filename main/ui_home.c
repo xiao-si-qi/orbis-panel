@@ -26,6 +26,7 @@
 #include "lv_font_noto_18_cjk.h"
 #include "mqtt_link.h"
 #include "ota.h"
+#include "bg_image.h"
 #include "ui_home.h"
 #include "wifi_manager.h"
 
@@ -458,6 +459,7 @@ static void build_ui(void)
 {
     lv_obj_t *scr = lv_screen_active();
     lv_obj_clean(scr);
+    bg_image_bind(scr);       /* 背景图铺在最底层 */
     lv_obj_set_style_bg_color(scr, COLOR_BG, 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
@@ -574,6 +576,7 @@ void ui_home_boot(void)
 {
     lv_obj_t *scr = lv_screen_active();
     lv_obj_clean(scr);
+    bg_image_bind(scr);       /* 背景图铺在最底层 */
     lv_obj_set_style_bg_color(scr, COLOR_BG, 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 

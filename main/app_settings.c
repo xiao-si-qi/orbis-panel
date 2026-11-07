@@ -22,6 +22,7 @@ static const char *TAG = "settings";
 #define KEY_MQTT_USER "mqtt_user"
 #define KEY_MQTT_PASS "mqtt_pass"
 #define KEY_DEVICE_ID "device_id"
+#define KEY_DEVICE_NAME "device_name"
 #define KEY_WEB_USER  "web_user"
 #define KEY_WEB_PASS  "web_pass"
 
@@ -63,6 +64,7 @@ static esp_err_t config_save(void)
     err |= nvs_set_str(h, KEY_MQTT_USER, s_cfg.mqtt_user);
     err |= nvs_set_str(h, KEY_MQTT_PASS, s_cfg.mqtt_pass);
     err |= nvs_set_str(h, KEY_DEVICE_ID, s_cfg.device_id);
+    err |= nvs_set_str(h, KEY_DEVICE_NAME, s_cfg.device_name);
     err |= nvs_set_str(h, KEY_WEB_USER, s_cfg.web_user);
     err |= nvs_set_str(h, KEY_WEB_PASS, s_cfg.web_pass);
     if (err == ESP_OK) {
@@ -94,6 +96,7 @@ esp_err_t app_settings_init(void)
     nvs_read_str(h, KEY_MQTT_USER, s_cfg.mqtt_user, sizeof(s_cfg.mqtt_user));
     nvs_read_str(h, KEY_MQTT_PASS, s_cfg.mqtt_pass, sizeof(s_cfg.mqtt_pass));
     nvs_read_str(h, KEY_DEVICE_ID, s_cfg.device_id, sizeof(s_cfg.device_id));
+    nvs_read_str(h, KEY_DEVICE_NAME, s_cfg.device_name, sizeof(s_cfg.device_name));
     nvs_read_str(h, KEY_WEB_USER, s_cfg.web_user, sizeof(s_cfg.web_user));
     nvs_read_str(h, KEY_WEB_PASS, s_cfg.web_pass, sizeof(s_cfg.web_pass));
     uint16_t port = 0;
@@ -121,6 +124,10 @@ esp_err_t app_settings_init(void)
         copy_str(s_cfg.mqtt_pass, sizeof(s_cfg.mqtt_pass), APP_SECRET_MQTT_PASS);
         seeded = true;
     }
+    if (s_cfg.device_name[0] == '\0') {
+        copy_str(s_cfg.device_name, sizeof(s_cfg.device_name), APP_SECRET_DEVICE_NAME);
+        seeded = true;
+    }
     if (s_cfg.web_user[0] == '\0') {
         copy_str(s_cfg.web_user, sizeof(s_cfg.web_user), APP_SECRET_WEB_USER);
         copy_str(s_cfg.web_pass, sizeof(s_cfg.web_pass), APP_SECRET_WEB_PASS);
@@ -133,6 +140,10 @@ esp_err_t app_settings_init(void)
     }
     if (s_cfg.mqtt_port == 0) {
         s_cfg.mqtt_port = 1883;
+    }
+    if (s_cfg.device_name[0] == '\0') {
+        copy_str(s_cfg.device_name, sizeof(s_cfg.device_name), APP_SECRET_DEVICE_NAME);
+        seeded = true;
     }
     if (s_cfg.web_user[0] == '\0') {
         copy_str(s_cfg.web_user, sizeof(s_cfg.web_user), APP_SECRET_WEB_USER);
@@ -184,6 +195,14 @@ esp_err_t app_settings_update(const char *ssid, const char *pass, const char *ha
     }
     if (ha_token) {
         copy_str(s_cfg.ha_token, sizeof(s_cfg.ha_token), ha_token);
+    }
+    return config_save();
+}
+
+esp_err_t app_settings_update_name(const char *name)
+{
+    if (name != NULL && name[0] != '\0') {
+        copy_str(s_cfg.device_name, sizeof(s_cfg.device_name), name);
     }
     return config_save();
 }

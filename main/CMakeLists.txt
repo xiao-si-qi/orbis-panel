@@ -6,6 +6,8 @@ idf_component_register(
         "ha_client.c"
         "layout.c"
         "mqtt_link.c"
+            "log_buffer.c"
+            "bg_image.c"
         "ota.c"
         "ui_home.c"
         "bsp_display.c"

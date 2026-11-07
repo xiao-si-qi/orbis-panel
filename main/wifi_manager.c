@@ -199,7 +199,8 @@ static const char *PROV_HTML_FMT =
     "<label>MQTT 端口</label><input name='mqtt_port' value='%d'>"
     "<label>MQTT 用户名</label><input name='mqtt_user' value='%s'>"
     "<label>MQTT 密码</label><input name='mqtt_pass' type='password' placeholder='已保存，留空表示不修改'>"
-    "<label>设备 ID（主题里的名字）</label><input name='device_id' value='%s'>"
+    "<label>设备 ID（主题里的名字，a-z 0-9 - _）</label><input name='device_id' value='%s'>"
+    "<label>中文显示名（HA 里显示的名字）</label><input name='device_name' value='%s'>"
     "<label>设置页用户名（HTTP Basic Auth）</label><input name='web_user' value='%s'>"
     "<label>设置页密码</label><input name='web_pass' type='password' placeholder='留空表示不修改'>"
     "<button type='submit'>保存并重启</button></form></body></html>";
@@ -228,7 +229,10 @@ static void url_decode(char *s)
     *out = '\0';
 }
 
-/* 从 urlencoded body 中取一个字段，就地解码写回 buf */
+/* 从 urlencoded body 中取一个字段：先把该字段原样拷到临时缓冲，再解码、再截断。
+   两个坑都踩过：
+     1. 不能先按 out_len 截断再解码 —— 中文一个字编码成 9 字节，会切成半个字符；
+     2. 不能就地改 body（把 '&' 改成 '\0'）—— 后面的字段就再也找不到了。 */
 static bool form_get(char *body, const char *key, char *out, size_t out_len)
 {
     char pattern[32];
@@ -239,14 +243,25 @@ static bool form_get(char *body, const char *key, char *out, size_t out_len)
         return false;
     }
     p += strlen(pattern);
-    char *end = strchr(p, '&');
+    const char *end = strchr(p, '&');
     size_t len = end ? (size_t)(end - p) : strlen(p);
-    if (len >= out_len) {
-        len = out_len - 1;
+
+    char *scratch = malloc(len + 1);
+    if (scratch == NULL) {
+        out[0] = '\0';
+        return false;
     }
-    memcpy(out, p, len);
-    out[len] = '\0';
-    url_decode(out);
+    memcpy(scratch, p, len);
+    scratch[len] = '\0';
+    url_decode(scratch);          /* 解码后只会变短 */
+
+    size_t decoded = strlen(scratch);
+    if (decoded >= out_len) {
+        decoded = out_len - 1;
+    }
+    memcpy(out, scratch, decoded);
+    out[decoded] = '\0';
+    free(scratch);
     return true;
 }
 
@@ -261,7 +276,7 @@ static esp_err_t prov_root_get(httpd_req_t *req)
         return httpd_resp_send_500(req);
     }
     snprintf(page, 4096, PROV_HTML_FMT, cfg->wifi_ssid, cfg->ha_url, cfg->mqtt_host, cfg->mqtt_port,
-             cfg->mqtt_user, cfg->device_id, cfg->web_user);
+             cfg->mqtt_user, cfg->device_id, cfg->device_name, cfg->web_user);
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     esp_err_t err = httpd_resp_send(req, page, HTTPD_RESP_USE_STRLEN);
     free(page);
@@ -298,6 +313,7 @@ static esp_err_t prov_save_post(httpd_req_t *req)
     char mqtt_user[APP_MQTT_USER_MAX] = {0};
     char mqtt_pass[APP_MQTT_PASS_MAX] = {0};
     char device_id[APP_DEVICE_ID_MAX] = {0};
+    char device_name[APP_DEVICE_NAME_MAX] = {0};
     char web_user[APP_WEB_USER_MAX] = {0};
     char web_pass[APP_WEB_PASS_MAX] = {0};
     form_get(body, "ssid", ssid, sizeof(ssid));
@@ -309,6 +325,7 @@ static esp_err_t prov_save_post(httpd_req_t *req)
     form_get(body, "mqtt_user", mqtt_user, sizeof(mqtt_user));
     form_get(body, "mqtt_pass", mqtt_pass, sizeof(mqtt_pass));
     form_get(body, "device_id", device_id, sizeof(device_id));
+    form_get(body, "device_name", device_name, sizeof(device_name));
     form_get(body, "web_user", web_user, sizeof(web_user));
     form_get(body, "web_pass", web_pass, sizeof(web_pass));
 
@@ -329,6 +346,7 @@ static esp_err_t prov_save_post(httpd_req_t *req)
                         pass[0] ? pass : NULL,
                         url[0] ? url : NULL,
                         token[0] ? token : NULL);
+    app_settings_update_name(device_name[0] ? device_name : NULL);
     app_settings_update_web(web_user[0] ? web_user : NULL, web_pass[0] ? web_pass : NULL);
     app_settings_update_mqtt(mqtt_host[0] ? mqtt_host : NULL,
                              atoi(mqtt_port),
@@ -348,6 +366,9 @@ esp_err_t wifi_manager_web_start(void)
 {
     if (s_httpd == NULL) {
         httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
+    /* 配置页 handler 里有 1KB 请求体 + 十余个配置缓冲，默认栈不够（曾导致
+       "stack overflow in task httpd" 直接重启）。 */
+    cfg.stack_size = 8192;
         cfg.lru_purge_enable = true;
         ESP_RETURN_ON_ERROR(httpd_start(&s_httpd, &cfg), TAG, "httpd start failed");
 
@@ -373,6 +394,9 @@ esp_err_t wifi_manager_start_provisioning(void)
 
     if (s_httpd == NULL) {
         httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
+    /* 配置页 handler 里有 1KB 请求体 + 十余个配置缓冲，默认栈不够（曾导致
+       "stack overflow in task httpd" 直接重启）。 */
+    cfg.stack_size = 8192;
         cfg.lru_purge_enable = true;
         ESP_RETURN_ON_ERROR(httpd_start(&s_httpd, &cfg), TAG, "httpd start failed");
 
