@@ -24,6 +24,7 @@
 #include "cJSON.h"
 
 #include "app_settings.h"
+#include "mqtt_link.h"
 #include "ota.h"
 
 static const char *TAG = "ota";
@@ -84,7 +85,7 @@ static esp_err_t fetch_manifest(char *version, size_t vlen, char *file, size_t f
     }
 
     char url[APP_HA_URL_MAX + 64];
-    snprintf(url, sizeof(url), "%s/local/orbis/firmware.json", cfg->ha_url);
+    snprintf(url, sizeof(url), "%s/local/switchyard/%s/firmware.json", cfg->ha_url, mqtt_link_device_id());
 
     esp_http_client_config_t http_cfg = {
         .url = url,
@@ -138,7 +139,7 @@ static void ota_task(void *arg)
             goto done;
         }
         const app_settings_t *cfg = app_settings_get();
-        snprintf(url, sizeof(url), "%s/local/orbis/%s", cfg->ha_url, file);
+        snprintf(url, sizeof(url), "%s/local/switchyard/%s/%s", cfg->ha_url, mqtt_link_device_id(), file);
     } else if (req != NULL && req->url[0] != '\0') {
         snprintf(url, sizeof(url), "%s", req->url);
         if (req->version[0]) {

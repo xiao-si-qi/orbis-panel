@@ -215,7 +215,7 @@ backups\jc3636w518\MANIFEST.md
 - **[switchyard](https://github.com/xiao-si-qi/switchyard)** —— 通用 ESP32 上位机（HA 加载项）：
   设备台账、屏幕布局下发、固件 OTA 分发，基于一套统一的 MQTT 约定
   （[PROTOCOL.md](https://github.com/xiao-si-qi/switchyard/blob/main/docs/PROTOCOL.md)）。
-  本工程的布局与固件文件默认就从它约定的 `/local/orbis/` 目录读取。
+  本工程的布局与固件文件默认就从它约定的 `/local/switchyard/` 目录读取。
 
 ## 内部 RAM 与 TLS
 
