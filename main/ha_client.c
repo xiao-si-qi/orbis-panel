@@ -27,7 +27,7 @@
 static const char *TAG = "ha";
 
 #define HA_HTTP_TIMEOUT_MS  10000
-#define HA_STATES_BUF_SIZE  (128 * 1024)
+#define HA_BODY_MAX  (8 * 1024)
 
 static esp_http_client_handle_t s_client;
 static SemaphoreHandle_t s_lock;
@@ -48,9 +48,11 @@ static int s_count;
 static esp_err_t http_event_handler(esp_http_client_event_t *ev)
 {
     if (ev->event_id == HTTP_EVENT_ON_DATA && ev->data && ev->data_len > 0) {
-        if (s_buf_len + (size_t)ev->data_len < HA_STATES_BUF_SIZE) {
-            memcpy(s_buf + s_buf_len, ev->data, ev->data_len);
-            s_buf_len += ev->data_len;
+        size_t room = HA_BODY_MAX - 1 - s_buf_len;
+        size_t n = (size_t)ev->data_len < room ? (size_t)ev->data_len : room;
+        if (n > 0) {
+            memcpy(s_buf + s_buf_len, ev->data, n);
+            s_buf_len += n;
             s_buf[s_buf_len] = '\0';
         }
     }
@@ -102,12 +104,14 @@ static int http_get(const char *url)
     } else {
         ESP_LOGW(TAG, "GET %s failed: %s (internal heap %d KB)", url, esp_err_to_name(err),
                  (int)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
+        /* 长连接被服务端/NAT 掐断后复用会一直失败：关掉，下次重新握手 */
+        esp_http_client_close(s_client);
     }
     xSemaphoreGive(s_lock);
     if (status > 0) {
         s_online = true;
         s_fail_count = 0;
-    } else if (++s_fail_count >= 3) {
+    } else if (++s_fail_count >= 5) {
         s_online = false;
     }
     if (status != 200) {
@@ -254,10 +258,7 @@ esp_err_t ha_client_init(void)
     snprintf(s_token, sizeof(s_token), "%s", cfg->ha_token);
 
     if (s_buf == NULL) {
-        s_buf = heap_caps_malloc(HA_STATES_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (s_buf == NULL) {
-            s_buf = malloc(HA_STATES_BUF_SIZE);
-        }
+        s_buf = malloc(HA_BODY_MAX);
         if (s_buf == NULL) {
             return ESP_ERR_NO_MEM;
         }
@@ -302,32 +303,16 @@ static void parse_entity_object(ha_entity_t *e, const char *obj_start, const cha
 
 esp_err_t ha_client_fetch_all(void)
 {
-    char url[APP_HA_URL_MAX + 32];
-    snprintf(url, sizeof(url), "%s/api/states", s_base);
-    if (http_get(url) != 200) {
-        return ESP_FAIL;
-    }
-    if (s_buf_len >= HA_STATES_BUF_SIZE - 1) {
-        ESP_LOGW(TAG, "states response truncated at %d KB", HA_STATES_BUF_SIZE / 1024);
-    }
-
-    /* 每个关注实体在整包 JSON 里定位一次，避免解析整个数组 */
+    /* 只取关注的那几个实体：/api/states 在实体多的 HA 上可能有近 1MB，
+       没必要为 5 个实体拉一整包（以前就是这么被截断才导致 HA 红点）。 */
+    int ok = 0;
     for (int i = 0; i < s_count; i++) {
-        char needle[128];
-        snprintf(needle, sizeof(needle), "\"entity_id\":\"%.95s\"", s_entities[i].entity_id);
-        const char *p = strstr(s_buf, needle);
-        if (p == NULL) {
-            ESP_LOGW(TAG, "%s not found in /api/states", s_entities[i].entity_id);
-            s_entities[i].fresh = false;
-            continue;
+        if (ha_client_refresh_at(i) == ESP_OK) {
+            ok++;
         }
-        const char *obj_end = strstr(p + strlen(needle), "\"entity_id\":\"");
-        if (obj_end == NULL) {
-            obj_end = s_buf + s_buf_len;
-        }
-        parse_entity_object(&s_entities[i], p, obj_end);
     }
-    return ESP_OK;
+    ESP_LOGI(TAG, "refreshed %d/%d entity(ies)", ok, s_count);
+    return (s_count == 0 || ok > 0) ? ESP_OK : ESP_FAIL;
 }
 
 esp_err_t ha_client_refresh_at(int idx)
