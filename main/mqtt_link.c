@@ -110,9 +110,10 @@ void mqtt_link_publish_state(void)
     char json[320];
     snprintf(json, sizeof(json),
              "{\"id\":\"%s\",\"type\":\"screen\",\"fw\":\"%s\",\"ip\":\"%s\",\"rssi\":%d,"
+             "\"brightness\":%d,"
              "\"uptime\":%lld,\"heap\":%d,\"ts\":%lld}",
              mqtt_link_device_id(), ota_current_version(), ip, wifi_manager_get_rssi(),
-             (long long)up_s, (int)(esp_get_free_heap_size() / 1024), (long long)time(NULL));
+             (int)bsp_display_get_brightness(), (long long)up_s, (int)(esp_get_free_heap_size() / 1024), (long long)time(NULL));
     publish_retained(s_topic_state, json);
 }
 

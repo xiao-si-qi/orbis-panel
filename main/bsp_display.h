@@ -26,6 +26,9 @@ esp_err_t bsp_display_init(esp_lcd_panel_handle_t *ret_panel,
 /** 背光亮度 0..100。 */
 void bsp_display_set_backlight(uint8_t percent);
 
+/** 当前背光亮度（0..100），状态上报用。 */
+uint8_t bsp_display_get_brightness(void);
+
 /** 设置/更换 DMA 传输完成回调（LVGL 移植层用，必须在 init 之后、开始刷屏之前调用）。 */
 void bsp_display_set_flush_done_hook(bsp_display_flush_done_cb_t cb, void *user_ctx);
 

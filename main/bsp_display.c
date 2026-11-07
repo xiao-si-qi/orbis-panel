@@ -20,7 +20,7 @@ static esp_lcd_panel_handle_t s_panel;
 static esp_lcd_panel_io_handle_t s_io;
 static bsp_display_flush_done_cb_t s_done_cb;
 static void *s_done_ctx;
-static uint8_t s_backlight = 0;
+static uint8_t s_backlight = 0;   /* 0-100，最近一次设定的亮度 */
 
 static bool on_color_trans_done(esp_lcd_panel_io_handle_t panel_io,
                                 esp_lcd_panel_io_event_data_t *edata, void *user_ctx)
@@ -63,6 +63,12 @@ void bsp_display_set_backlight(uint8_t percent)
     uint32_t duty = (uint32_t)percent * LCD_LEDC_DUTY_MAX / 100;
     ledc_set_duty(LCD_LEDC_MODE, LCD_LEDC_CHANNEL, duty);
     ledc_update_duty(LCD_LEDC_MODE, LCD_LEDC_CHANNEL);
+}
+
+/** 当前亮度（0-100），给状态上报用。 */
+uint8_t bsp_display_get_brightness(void)
+{
+    return s_backlight;
 }
 
 void bsp_display_screen_on(bool on)
