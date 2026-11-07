@@ -1,5 +1,5 @@
 name: Orbis Panel Editor
-version: "0.1.1"
+version: "0.1.2"
 slug: orbis_panel
 description: 在 Home Assistant 网页里编辑 JC3636W518 控制屏的 JSON 布局并发布
 url: https://github.com/xiao-si-qi/orbis-panel
@@ -8,6 +8,8 @@ arch:
   - amd64
   - armv7
 init: false
+homeassistant_api: true
+hassio_api: true
 ingress: true
 ingress_port: 8099
 panel_icon: mdi:tablet-dashboard
