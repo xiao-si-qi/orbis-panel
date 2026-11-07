@@ -201,6 +201,13 @@ backups\jc3636w518\MANIFEST.md
 
 本工程分区表（`partitions.csv`）与原厂不同，恢复原厂固件会整片覆盖回出厂状态。
 
+## 相关项目
+
+- **[switchyard](https://github.com/xiao-si-qi/switchyard)** —— 通用 ESP32 上位机（HA 加载项）：
+  设备台账、屏幕布局下发、固件 OTA 分发，基于一套统一的 MQTT 约定
+  （[PROTOCOL.md](https://github.com/xiao-si-qi/switchyard/blob/main/docs/PROTOCOL.md)）。
+  本工程的布局与固件文件默认就从它约定的 `/local/orbis/` 目录读取。
+
 ## 备注
 
 - 屏幕方向/镜像：`bsp_display.c` 里 `esp_lcd_panel_invert_color(true)`，
