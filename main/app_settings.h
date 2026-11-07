@@ -17,6 +17,8 @@ extern "C" {
 #define APP_MQTT_USER_MAX   32
 #define APP_MQTT_PASS_MAX   64
 #define APP_DEVICE_ID_MAX   32
+#define APP_WEB_USER_MAX    32
+#define APP_WEB_PASS_MAX    64
 
 typedef struct {
     char wifi_ssid[APP_WIFI_SSID_MAX];
@@ -28,6 +30,8 @@ typedef struct {
     char mqtt_user[APP_MQTT_USER_MAX];
     char mqtt_pass[APP_MQTT_PASS_MAX];
     char device_id[APP_DEVICE_ID_MAX];
+    char web_user[APP_WEB_USER_MAX];
+    char web_pass[APP_WEB_PASS_MAX];
 } app_settings_t;
 
 /** 初始化 NVS 并读取配置；NVS 为空时用 secrets.h 的值播种。 */
@@ -40,6 +44,8 @@ const app_settings_t *app_settings_get(void);
 esp_err_t app_settings_update(const char *ssid, const char *pass, const char *ha_url, const char *ha_token);
 
 /** 追加的 MQTT / 设备身份配置（任一为 NULL 表示不修改）。 */
+esp_err_t app_settings_update_web(const char *user, const char *pass);
+
 esp_err_t app_settings_update_mqtt(const char *host, int port, const char *user, const char *pass,
                                    const char *device_id);
 

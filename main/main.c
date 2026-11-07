@@ -67,6 +67,14 @@ static void network_task(void *arg)
         return;
     }
 
+    /* 先把配置页和 MQTT 起起来：它们不依赖 HA 的 REST，
+       不会被后面较慢的 /api/states 请求堵住 */
+    wifi_manager_web_start();
+
+    if (mqtt_link_start() == ESP_OK) {
+        ESP_LOGI(TAG, "MQTT enabled, device id '%s'", mqtt_link_device_id());
+    }
+
     /* 布局只走 MQTT：NVS 里是上一次下发的，没收到过就只显示 System 页 */
     layout_t layout;
     if (layout_load_nvs(&layout) == ESP_OK) {
@@ -75,14 +83,8 @@ static void network_task(void *arg)
         ui_home_apply(&layout);
         ESP_LOGI(TAG, "layout restored from NVS (%d page(s))", layout.page_count);
     } else {
-        ESP_LOGW(TAG, "no layout yet - waiting for orbis/%s/cfg", mqtt_link_device_id());
+        ESP_LOGW(TAG, "no layout yet - waiting for switchyard/%s/cfg", mqtt_link_device_id());
         ui_home_apply(NULL);
-    }
-
-    wifi_manager_web_start();
-
-    if (mqtt_link_start() == ESP_OK) {
-        ESP_LOGI(TAG, "MQTT enabled, device id '%s'", mqtt_link_device_id());
     }
 
     ha_client_start_poll();

@@ -12,6 +12,8 @@
 #include "esp_system.h"
 #include "esp_wifi.h"
 
+#include "mbedtls/base64.h"
+
 #include "app_settings.h"
 #include "wifi_manager.h"
 
@@ -131,6 +133,36 @@ int wifi_manager_get_rssi(void)
 /* 配网页面                                                                    */
 /* ------------------------------------------------------------------------- */
 
+static esp_err_t send_401(httpd_req_t *req)
+{
+    httpd_resp_set_status(req, "401 Unauthorized");
+    httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"Orbis\"");
+    return httpd_resp_send(req, "authentication required", HTTPD_RESP_USE_STRLEN);
+}
+
+/** 校验 Authorization: Basic base64(user:pass) */
+static bool http_auth_ok(httpd_req_t *req)
+{
+    char hdr[192];
+    if (httpd_req_get_hdr_value_str(req, "Authorization", hdr, sizeof(hdr)) != ESP_OK) {
+        return false;
+    }
+    const app_settings_t *cfg = app_settings_get();
+    char cred[128];
+    snprintf(cred, sizeof(cred), "%s:%s", cfg->web_user, cfg->web_pass);
+
+    unsigned char b64[192];
+    size_t olen = 0;
+    if (mbedtls_base64_encode(b64, sizeof(b64) - 1, &olen, (const unsigned char *)cred, strlen(cred)) != 0) {
+        return false;
+    }
+    b64[olen] = '\0';
+
+    char expect[224];
+    snprintf(expect, sizeof(expect), "Basic %s", (char *)b64);
+    return strcmp(hdr, expect) == 0;
+}
+
 static const char *PROV_HTML_FMT =
     "<!DOCTYPE html><html><head><meta charset='utf-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -152,6 +184,8 @@ static const char *PROV_HTML_FMT =
     "<label>MQTT 用户名</label><input name='mqtt_user' value='%s'>"
     "<label>MQTT 密码</label><input name='mqtt_pass' type='password' placeholder='已保存，留空表示不修改'>"
     "<label>设备 ID（主题里的名字）</label><input name='device_id' value='%s'>"
+    "<label>设置页用户名（HTTP Basic Auth）</label><input name='web_user' value='%s'>"
+    "<label>设置页密码</label><input name='web_pass' type='password' placeholder='留空表示不修改'>"
     "<button type='submit'>保存并重启</button></form></body></html>";
 
 static int hex2int(char c)
@@ -202,13 +236,16 @@ static bool form_get(char *body, const char *key, char *out, size_t out_len)
 
 static esp_err_t prov_root_get(httpd_req_t *req)
 {
+    if (!http_auth_ok(req)) {
+        return send_401(req);
+    }
     const app_settings_t *cfg = app_settings_get();
     char *page = malloc(4096);
     if (page == NULL) {
         return httpd_resp_send_500(req);
     }
     snprintf(page, 4096, PROV_HTML_FMT, cfg->wifi_ssid, cfg->ha_url, cfg->mqtt_host, cfg->mqtt_port,
-             cfg->mqtt_user, cfg->device_id);
+             cfg->mqtt_user, cfg->device_id, cfg->web_user);
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     esp_err_t err = httpd_resp_send(req, page, HTTPD_RESP_USE_STRLEN);
     free(page);
@@ -217,6 +254,9 @@ static esp_err_t prov_root_get(httpd_req_t *req)
 
 static esp_err_t prov_save_post(httpd_req_t *req)
 {
+    if (!http_auth_ok(req)) {
+        return send_401(req);
+    }
     char body[1024] = {0};
     int total = req->content_len;
     if (total <= 0 || total >= (int)sizeof(body)) {
@@ -242,6 +282,8 @@ static esp_err_t prov_save_post(httpd_req_t *req)
     char mqtt_user[APP_MQTT_USER_MAX] = {0};
     char mqtt_pass[APP_MQTT_PASS_MAX] = {0};
     char device_id[APP_DEVICE_ID_MAX] = {0};
+    char web_user[APP_WEB_USER_MAX] = {0};
+    char web_pass[APP_WEB_PASS_MAX] = {0};
     form_get(body, "ssid", ssid, sizeof(ssid));
     form_get(body, "pass", pass, sizeof(pass));
     form_get(body, "url", url, sizeof(url));
@@ -251,6 +293,8 @@ static esp_err_t prov_save_post(httpd_req_t *req)
     form_get(body, "mqtt_user", mqtt_user, sizeof(mqtt_user));
     form_get(body, "mqtt_pass", mqtt_pass, sizeof(mqtt_pass));
     form_get(body, "device_id", device_id, sizeof(device_id));
+    form_get(body, "web_user", web_user, sizeof(web_user));
+    form_get(body, "web_pass", web_pass, sizeof(web_pass));
 
     if (ssid[0] == '\0') {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ssid required");
@@ -263,6 +307,7 @@ static esp_err_t prov_save_post(httpd_req_t *req)
                         pass[0] ? pass : NULL,
                         url[0] ? url : NULL,
                         token[0] ? token : NULL);
+    app_settings_update_web(web_user[0] ? web_user : NULL, web_pass[0] ? web_pass : NULL);
     app_settings_update_mqtt(mqtt_host[0] ? mqtt_host : NULL,
                              atoi(mqtt_port),
                              mqtt_user[0] ? mqtt_user : NULL,

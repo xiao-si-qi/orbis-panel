@@ -22,6 +22,8 @@ static const char *TAG = "settings";
 #define KEY_MQTT_USER "mqtt_user"
 #define KEY_MQTT_PASS "mqtt_pass"
 #define KEY_DEVICE_ID "device_id"
+#define KEY_WEB_USER  "web_user"
+#define KEY_WEB_PASS  "web_pass"
 
 static app_settings_t s_cfg;
 
@@ -61,6 +63,8 @@ static esp_err_t config_save(void)
     err |= nvs_set_str(h, KEY_MQTT_USER, s_cfg.mqtt_user);
     err |= nvs_set_str(h, KEY_MQTT_PASS, s_cfg.mqtt_pass);
     err |= nvs_set_str(h, KEY_DEVICE_ID, s_cfg.device_id);
+    err |= nvs_set_str(h, KEY_WEB_USER, s_cfg.web_user);
+    err |= nvs_set_str(h, KEY_WEB_PASS, s_cfg.web_pass);
     if (err == ESP_OK) {
         err = nvs_commit(h);
     }
@@ -90,6 +94,8 @@ esp_err_t app_settings_init(void)
     nvs_read_str(h, KEY_MQTT_USER, s_cfg.mqtt_user, sizeof(s_cfg.mqtt_user));
     nvs_read_str(h, KEY_MQTT_PASS, s_cfg.mqtt_pass, sizeof(s_cfg.mqtt_pass));
     nvs_read_str(h, KEY_DEVICE_ID, s_cfg.device_id, sizeof(s_cfg.device_id));
+    nvs_read_str(h, KEY_WEB_USER, s_cfg.web_user, sizeof(s_cfg.web_user));
+    nvs_read_str(h, KEY_WEB_PASS, s_cfg.web_pass, sizeof(s_cfg.web_pass));
     uint16_t port = 0;
     if (nvs_get_u16(h, KEY_MQTT_PORT, &port) == ESP_OK) {
         s_cfg.mqtt_port = port;
@@ -115,12 +121,24 @@ esp_err_t app_settings_init(void)
         copy_str(s_cfg.mqtt_pass, sizeof(s_cfg.mqtt_pass), APP_SECRET_MQTT_PASS);
         seeded = true;
     }
+    if (s_cfg.web_user[0] == '\0') {
+        copy_str(s_cfg.web_user, sizeof(s_cfg.web_user), APP_SECRET_WEB_USER);
+        copy_str(s_cfg.web_pass, sizeof(s_cfg.web_pass), APP_SECRET_WEB_PASS);
+        ESP_LOGW(TAG, "settings page auth: %s / %s (change me)", s_cfg.web_user, s_cfg.web_pass);
+        seeded = true;
+    }
     if (s_cfg.device_id[0] == '\0') {
         copy_str(s_cfg.device_id, sizeof(s_cfg.device_id), APP_SECRET_DEVICE_ID);
         seeded = true;
     }
     if (s_cfg.mqtt_port == 0) {
         s_cfg.mqtt_port = 1883;
+    }
+    if (s_cfg.web_user[0] == '\0') {
+        copy_str(s_cfg.web_user, sizeof(s_cfg.web_user), APP_SECRET_WEB_USER);
+        copy_str(s_cfg.web_pass, sizeof(s_cfg.web_pass), APP_SECRET_WEB_PASS);
+        ESP_LOGW(TAG, "settings page auth: %s / %s (change me)", s_cfg.web_user, s_cfg.web_pass);
+        seeded = true;
     }
     if (s_cfg.device_id[0] == '\0') {
         uint8_t mac[6] = {0};
@@ -166,6 +184,17 @@ esp_err_t app_settings_update(const char *ssid, const char *pass, const char *ha
     }
     if (ha_token) {
         copy_str(s_cfg.ha_token, sizeof(s_cfg.ha_token), ha_token);
+    }
+    return config_save();
+}
+
+esp_err_t app_settings_update_web(const char *user, const char *pass)
+{
+    if (user) {
+        copy_str(s_cfg.web_user, sizeof(s_cfg.web_user), user);
+    }
+    if (pass) {
+        copy_str(s_cfg.web_pass, sizeof(s_cfg.web_pass), pass);
     }
     return config_save();
 }
