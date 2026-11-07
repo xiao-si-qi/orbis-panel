@@ -3,13 +3,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v5.5.4-red.svg)](https://docs.espressif.com/projects/esp-idf/)
 [![Target](https://img.shields.io/badge/target-ESP32--S3-8A2BE2.svg)](https://www.espressif.com/en/products/socs/esp32-s3)
-[![Home Assistant Add-on](https://img.shields.io/badge/Home%20Assistant-add--on-41BDF5.svg)](https://github.com/xiao-si-qi/orbis-panel)
+[![Switchyard](https://img.shields.io/badge/HA%20%E6%8F%92%E4%BB%B6-switchyard-41BDF5.svg)](https://github.com/xiao-si-qi/switchyard)
 
 > 硬件：GUITION **太极小派 JC3636W518**（2024-07 批次）。本项目不是厂家官方项目。
 
 基于 **ESP32-S3R8 + 1.85" 圆形 360×360 ST77916** 模组的 Home Assistant 触屏控制面板。
 
-> **开发方式：本项目全部由 AI 完成。** 固件、HA 插件、字体生成脚本和文档都是 AI（DeepSeek 助手）
+> **开发方式：本项目全部由 AI 完成。** 固件、字体生成脚本和文档都是 AI（DeepSeek 助手）
 > 与使用者结对产出：需求拆解、驱动移植、LVGL UI、JSON 布局协议、实体挑选策略、踩坑排查、发布流程。
 > 人类负责硬件选型、实机验证和验收。代码按"能跑、能复现"的标准交付，但不承诺工业级质量，
 > 用于家电控制前请自行评估风险。
@@ -79,14 +79,14 @@ orbis-panel/
 │   ├── fonts/                  # 生成的 Noto Sans SC 中文字体（见 docs/FONT.md）
 │   ├── secrets.h               # 出厂默认值（已在 .gitignore，勿提交）
 │   └── Kconfig.projbuild       # menuconfig: 轮询间隔、实体槽位
-├── ha_addon/                   # HA 插件：网页里编辑布局 JSON
-│   ├── repository.yaml
-│   └── orbis_panel/
 ├── docs/
 │   ├── layout.example.json     # 布局示例
 │   └── FONT.md                 # 字库来源/许可/重新生成
 ├── tools/gen_cjk_font.py       # TTF → LVGL 字体生成脚本
 └── LICENSE                     # MIT
+
+> 配套的 HA 加载项（布局编辑 / 固件 OTA / 设备台账）在
+> [switchyard](https://github.com/xiao-si-qi/switchyard)，本仓库不再包含插件代码。
 ```
 
 ## 编译 & 烧录
@@ -171,9 +171,9 @@ LVGL 通过组件管理器解析（本机组件仓库里有 9.2.x，可离线）
 - **拉不到布局文件**（404 / 离线）时退回自动挑选：灯 → 风扇/布尔/开关 → 场景 → 传感器；
 - 改完布局**下次开机生效**（目前没有热重载）。
 
-`ha_addon/` 里有一个 Home Assistant 插件（**Orbis Panel Editor**），
-在 HA 网页里用「页面 tab + 卡片 + 实体搜索」编辑这个 JSON 并一键发布到
-`/config/www/orbis/layout.json`，不需要手改文件。安装见 [ha_addon/README.md](ha_addon/README.md)。
+布局/固件的发布由独立项目 **[switchyard](https://github.com/xiao-si-qi/switchyard)**（HA 加载项）负责：
+在 HA 网页里编辑页面/卡片并发布到 `/config/www/orbis/layout.json`，上传固件到同目录。
+本仓库只维护圆屏固件本身。
 
 ## 已实现 / 待办
 
@@ -182,7 +182,6 @@ LVGL 通过组件管理器解析（本机组件仓库里有 9.2.x，可离线）
 - [x] Wi-Fi STA + 退避重连 + 配网页面
 - [x] HA REST 轮询 + 服务调用（异步，不卡 UI）
 - [x] JSON 布局（页面 / 卡片 / 实体全由 HA 上的 JSON 决定）
-- [x] HA 插件：网页端可视化编辑并发布布局
 - [x] GB2312 中文字体（Noto Sans SC，OFL）
 - [ ] 时间显示（SNTP）
 - [ ] 布局热重载（现在要重启才生效）
