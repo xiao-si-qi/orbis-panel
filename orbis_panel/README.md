@@ -11,7 +11,7 @@ orbis-panel/
     ├── build.yaml               # 三种架构的基础镜像
     ├── Dockerfile
     └── app/
-        ├── main.py              # Flask：读/写 layout.json，代理 HA 实体列表
+        ├── main.py              # Python 标准库：读/写 layout.json，代理 HA 实体列表
         └── index.html           # 编辑器（页面 tab + 卡片 + 实体搜索）
 ```
 
@@ -36,7 +36,7 @@ orbis-panel/
 
 没有 add-on 机制，直接用 File Editor / Samba 编辑
 `/config/www/orbis/layout.json` 即可，格式见 [`../docs/layout.example.json`](../docs/layout.example.json)。
-也可以在本机跑这个 Flask 应用（`pip install flask requests`，设置 `LAYOUT_PATH`），
+也可以在本机跑这个 Python 标准库 应用（只依赖 Python 标准库，设置 `LAYOUT_PATH` 即可），
 但 `SUPERVISOR_TOKEN` 在容器外拿不到，实体列表功能会不可用（布局仍可编辑）。
 
 ## 用法
