@@ -162,7 +162,11 @@ static void handle_cmd(const char *payload)
         const cJSON *jurl = cJSON_GetObjectItemCaseSensitive(root, "url");
         const cJSON *jver = cJSON_GetObjectItemCaseSensitive(root, "version");
         if (cJSON_IsString(jurl)) {
+            /* 带 url：直接下这个地址（switchyard 的「下发 OTA」） */
             ota_start_url(jurl->valuestring, cJSON_IsString(jver) ? jver->valuestring : NULL);
+        } else {
+            /* 只有 {"cmd":"ota"}：走 manifest（HA 的「检查更新」按钮） */
+            ota_start_check();
         }
     } else if (strcmp(cmd, "set") == 0) {
         const cJSON *jkey = cJSON_GetObjectItemCaseSensitive(root, "key");
