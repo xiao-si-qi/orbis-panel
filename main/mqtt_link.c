@@ -109,10 +109,11 @@ void mqtt_link_publish_meta(void)
     if (!s_connected) {
         return;
     }
-    char json[256];
+    char json[320];
     snprintf(json, sizeof(json),
-             "{\"type\":\"screen\",\"caps\":[\"layout\",\"ota\",\"reboot\",\"brightness\"],"
-             "\"display\":{\"w\":%d,\"h\":%d},\"fw\":\"%s\"}",
+             "{\"type\":\"screen\",\"caps\":[\"fw\",\"rssi\",\"uptime\",\"online\",\"layout\",\"ota\",\"reboot\",\"brightness\"],"
+             "\"display\":{\"w\":%d,\"h\":%d},\"fw\":\"%s\","
+             "\"name\":\"圆屏\",\"model\":\"JC3636W518\"}",
              360, 360, ota_current_version());
     publish_retained(s_topic_meta, json);
 }
