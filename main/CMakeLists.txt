@@ -5,6 +5,7 @@ idf_component_register(
         "wifi_manager.c"
         "ha_client.c"
         "layout.c"
+        "mqtt_link.c"
         "ota.c"
         "ui_home.c"
         "bsp_display.c"
@@ -27,6 +28,7 @@ idf_component_register(
         mbedtls
         app_update
         esp_https_ota
+        mqtt
         bootloader_support
         nvs_flash
         esp_lcd_st77916

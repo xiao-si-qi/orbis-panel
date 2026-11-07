@@ -24,6 +24,7 @@
 #include "ha_client.h"
 #include "layout.h"
 #include "lv_font_noto_18_cjk.h"
+#include "mqtt_link.h"
 #include "ota.h"
 #include "ui_home.h"
 #include "wifi_manager.h"
@@ -75,7 +76,7 @@ static lv_obj_t *s_hint;
 static lv_timer_t *s_refresh_timer;
 
 /* System 页的控件 */
-static lv_obj_t *s_sys_lines[5];
+static lv_obj_t *s_sys_lines[6];
 static lv_obj_t *s_ota_btn;
 static lv_obj_t *s_ota_btn_label;
 static lv_obj_t *s_ota_bar;
@@ -267,12 +268,12 @@ static void build_status_page(lv_obj_t *scr)
     lv_obj_remove_flag(page, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(page, gesture_cb, LV_EVENT_GESTURE, NULL);
 
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 6; i++) {
         s_sys_lines[i] = lv_label_create(page);
         lv_label_set_text(s_sys_lines[i], "--");
         lv_obj_set_style_text_font(s_sys_lines[i], &lv_font_noto_18_cjk, 0);
         lv_obj_set_style_text_color(s_sys_lines[i], COLOR_MUTED, 0);
-        lv_obj_set_pos(s_sys_lines[i], 48, 78 + i * 26);
+        lv_obj_set_pos(s_sys_lines[i], 48, 74 + i * 24);
     }
 
     s_ota_btn = lv_button_create(page);
@@ -329,6 +330,9 @@ static void refresh_status_page(void)
 
     snprintf(buf, sizeof(buf), "内存  %d KB", (int)(esp_get_free_heap_size() / 1024));
     lv_label_set_text(s_sys_lines[4], buf);
+
+    snprintf(buf, sizeof(buf), "MQTT  %s", mqtt_link_connected() ? "已连接" : "未连接");
+    lv_label_set_text(s_sys_lines[5], buf);
 
     if (ota_busy()) {
         lv_obj_remove_flag(s_ota_bar, LV_OBJ_FLAG_HIDDEN);
@@ -472,7 +476,7 @@ static void build_ui(void)
 
     /* 标题 */
     s_title = lv_label_create(scr);
-    lv_label_set_text(s_title, page_title(0));
+    lv_label_set_text(s_title, s_layout_valid ? page_title(0) : "System");
     lv_obj_set_style_text_color(s_title, COLOR_TEXT, 0);
     lv_obj_set_style_text_font(s_title, &lv_font_montserrat_24, 0);
     lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 18);
@@ -591,10 +595,13 @@ void ui_home_boot(void)
 
 void ui_home_apply(const layout_t *layout)
 {
-    if (layout == NULL || layout->page_count == 0) {
-        return;
+    if (layout != NULL && layout->page_count > 0) {
+        s_layout = *layout;
+        s_layout_valid = true;
+    } else {
+        /* 还没有收到 cfg：只保留 System 页 */
+        memset(&s_layout, 0, sizeof(s_layout));
+        s_layout_valid = false;
     }
-    s_layout = *layout;
-    s_layout_valid = true;
     lv_async_call(apply_async_cb, NULL);
 }

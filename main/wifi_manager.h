@@ -23,6 +23,9 @@ bool wifi_manager_is_connected(void);
 /** 启动配网热点 "JC3636-Setup" + 配置页面（192.168.4.1）。 */
 esp_err_t wifi_manager_start_provisioning(void);
 
+/** 只启动配置网页（不启热点），连上 Wi-Fi 后可用 http://<device-ip>/ 改配置。 */
+esp_err_t wifi_manager_web_start(void);
+
 /** 当前 RSSI（dBm），未连接返回 0。 */
 int wifi_manager_get_rssi(void);
 

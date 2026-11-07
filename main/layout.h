@@ -38,8 +38,14 @@ typedef struct {
 /** 从 `<ha_url>/local/orbis/layout.json` 拉取布局。 */
 esp_err_t layout_fetch(layout_t *out);
 
-/** 用 ha_client 自动挑选的结果拼一个兜底布局（每页最多 4 个）。 */
-void layout_fallback(layout_t *out);
+/** 解析一段布局 JSON（MQTT 下发 / NVS 里存的那份）。 */
+esp_err_t layout_parse(const char *json, layout_t *out);
+
+/** 把布局 JSON 存进 NVS（设备重启后先用它）。 */
+esp_err_t layout_save_nvs(const char *json);
+
+/** 从 NVS 读上一次下发的布局；没有则返回 ESP_ERR_NOT_FOUND。 */
+esp_err_t layout_load_nvs(layout_t *out);
 
 /** 按 entity_id 的域推断 tile 类型。 */
 tile_type_t layout_type_of(const char *entity_id);

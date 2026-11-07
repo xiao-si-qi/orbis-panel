@@ -20,7 +20,9 @@
 #include "bsp_lvgl.h"
 #include "bsp_touch.h"
 #include "ha_client.h"
+#include "esp_sntp.h"
 #include "layout.h"
+#include "mqtt_link.h"
 #include "ui_home.h"
 #include "wifi_manager.h"
 
@@ -53,25 +55,33 @@ static void network_task(void *arg)
     }
     ESP_LOGI(TAG, "Wi-Fi connected, rssi=%d dBm", wifi_manager_get_rssi());
 
+    /* 时间同步（MQTT state 里的 ts 需要真实时间） */
+    esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_init();
+
     if (ha_client_init() != ESP_OK) {
         ESP_LOGE(TAG, "HA client init failed (check provisioning page)");
         vTaskDelete(NULL);
         return;
     }
 
+    /* 布局只走 MQTT：NVS 里是上一次下发的，没收到过就只显示 System 页 */
     layout_t layout;
-    if (layout_fetch(&layout) == ESP_OK) {
+    if (layout_load_nvs(&layout) == ESP_OK) {
         register_layout_entities(&layout);
         ha_client_fetch_all();
         ui_home_apply(&layout);
-        ESP_LOGI(TAG, "layout applied from HA");
-    } else if (ha_client_autofill() == ESP_OK) {
-        layout_fallback(&layout);
-        ha_client_fetch_all();
-        ui_home_apply(&layout);
-        ESP_LOGI(TAG, "fallback layout applied (%d page(s))", layout.page_count);
+        ESP_LOGI(TAG, "layout restored from NVS (%d page(s))", layout.page_count);
     } else {
-        ESP_LOGE(TAG, "no layout and no entities found");
+        ESP_LOGW(TAG, "no layout yet - waiting for orbis/%s/cfg", mqtt_link_device_id());
+        ui_home_apply(NULL);
+    }
+
+    wifi_manager_web_start();
+
+    if (mqtt_link_start() == ESP_OK) {
+        ESP_LOGI(TAG, "MQTT enabled, device id '%s'", mqtt_link_device_id());
     }
 
     ha_client_start_poll();

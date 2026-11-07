@@ -149,15 +149,18 @@ LVGL 通过组件管理器解析（本机组件仓库里有 9.2.x，可离线）
 > 令牌是明文存放在 `secrets.h` / NVS 里的，建议在 HA 里单独建一个只用于这块屏的令牌，
 > 万一板子丢了直接吊销这一个即可。
 
-## 布局：JSON 驱动（改布局不用重烧固件）
+## 布局：MQTT 下发（改布局不用重烧固件）
 
-开机时固件会先尝试从 HA 拉布局：
+布局不再从 HTTP 文件读，而是 **由 switchyard 通过 MQTT 下发**：
 
 ```
-<ha_url>/local/orbis/layout.json
+orbis/<id>/cfg   (retained)   payload = 布局 JSON
 ```
 
-（对应 HA 的 `config/www/orbis/layout.json`，`/local/` 是公开静态目录，不需要令牌。）
+设备收到后立即应用、并存进 NVS（重启后先用它）。首次开机还没收到 cfg 时只显示
+System 页（固件版本 / IP / MQTT 状态 / 设备 id）。
+
+布局 JSON 格式：
 
 ```json
 {
@@ -175,50 +178,10 @@ LVGL 通过组件管理器解析（本机组件仓库里有 9.2.x，可离线）
 }
 ```
 
-规则：
-
-- 每页最多 **4 个卡片**（2×2），最多 **6 页**；页面多时底部出现翻页圆点，也支持左右滑动；
-- `type`：`toggle`（点一下调 `toggle`）/ `scene`（调 `turn_on`）/ `sensor`（只读，显示值+单位）；
-  省略时按域名推断（`sensor.*` → sensor，`script./scene./automation.` → scene，其它 → toggle）；
+- 每页最多 4 个卡片（2×2），最多 6 页；
+- `type`：`toggle`（toggle）/ `scene`（turn_on）/ `sensor`（只读），省略时按域名推断；
 - `label` 省略时用 HA 的 `friendly_name`；
-- 启动时**一次** `/api/states` 把布局里所有实体的名字/状态/单位填好，之后只轮询这些实体；
-- **拉不到布局文件**（404 / 离线）时退回自动挑选：灯 → 风扇/布尔/开关 → 场景 → 传感器；
-- 改完布局**下次开机生效**（目前没有热重载）。
-
-布局/固件的发布由独立项目 **[switchyard](https://github.com/xiao-si-qi/switchyard)**（HA 加载项）负责：
-在 HA 网页里编辑页面/卡片并发布到 `/config/www/orbis/layout.json`，上传固件到同目录。
-本仓库只维护圆屏固件本身。
-
-## System 页与固件 OTA
-
-屏幕的最后一页（最后一个圆点）是固件自己画的 **System 页**：
-
-```
-固件  v0.1.1
-WiFi  -72 dBm
-地址  192.168.1.38
-运行  0h42m
-内存  131 KB
-        [ 检查更新 ]
-```
-
-点「检查更新」会去拉 `<ha>/local/orbis/firmware.json`，版本号和当前固件不同就下载
-`firmware.bin`，写进**另一个 OTA 槽**，完成后重启。
-
-分区表是双槽 + rollback（`partitions.csv`）：
-
-| 分区 | 大小 | 说明 |
-|---|---|---|
-| ota_0 / ota_1 | 4 MB × 2 | 新固件写非活动槽，当前固件不受影响 |
-| otadata | 8 KB | 记录从哪个槽启动 |
-| assets | 7.9 MB | 暂空，留给图片/字体/缓存 |
-
-**断电安全**：`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`，启动成功后调用
-`esp_ota_mark_app_valid_cancel_rollback()`；升级中途断电仍启动旧固件，
-新固件若启动失败自动回滚。
-
-上传固件与触发升级用 [switchyard](https://github.com/xiao-si-qi/switchyard) 加载项，
-也可以通过 `idf.py -p <port> flash` 直接烧。
+- 改完布局在 switchyard 里点「下发」，设备**立即生效**，不用重启、不用重烧。
 
 ## 已实现 / 待办
 

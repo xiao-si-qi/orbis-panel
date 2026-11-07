@@ -9,6 +9,7 @@
  */
 
 #include <string.h>
+#include <stdlib.h>
 #include <stdio.h>
 
 #include "freertos/FreeRTOS.h"
@@ -55,6 +56,12 @@ const char *ota_status_text(void)
 {
     return s_status;
 }
+
+typedef struct {
+    char url[256];
+    char version[24];
+    bool use_manifest;
+} ota_req_t;
 
 static esp_err_t http_event(esp_http_client_event_t *ev)
 {
@@ -119,31 +126,35 @@ static esp_err_t fetch_manifest(char *version, size_t vlen, char *file, size_t f
 
 static void ota_task(void *arg)
 {
-    (void)arg;
-
+    ota_req_t *req = (ota_req_t *)arg;
     char version[24] = {0};
     char file[48] = {0};
+    char url[320];
 
-    snprintf(s_status, sizeof(s_status), "checking...");
-    if (fetch_manifest(version, sizeof(version), file, sizeof(file)) != ESP_OK) {
-        snprintf(s_status, sizeof(s_status), "no manifest");
-        s_busy = false;
-        vTaskDelete(NULL);
-        return;
+    if (req != NULL && req->use_manifest) {
+        snprintf(s_status, sizeof(s_status), "checking...");
+        if (fetch_manifest(version, sizeof(version), file, sizeof(file)) != ESP_OK) {
+            snprintf(s_status, sizeof(s_status), "no manifest");
+            goto done;
+        }
+        const app_settings_t *cfg = app_settings_get();
+        snprintf(url, sizeof(url), "%s/local/orbis/%s", cfg->ha_url, file);
+    } else if (req != NULL && req->url[0] != '\0') {
+        snprintf(url, sizeof(url), "%s", req->url);
+        if (req->version[0]) {
+            snprintf(version, sizeof(version), "%s", req->version);
+        }
+    } else {
+        snprintf(s_status, sizeof(s_status), "no target");
+        goto done;
     }
 
     const char *current = ota_current_version();
     ESP_LOGI(TAG, "current=%s remote=%s", current, version);
-    if (strcmp(version, current) == 0) {
+    if (version[0] && strcmp(version, current) == 0) {
         snprintf(s_status, sizeof(s_status), "up to date: %s", current);
-        s_busy = false;
-        vTaskDelete(NULL);
-        return;
+        goto done;
     }
-
-    const app_settings_t *cfg = app_settings_get();
-    char url[APP_HA_URL_MAX + 96];
-    snprintf(url, sizeof(url), "%s/local/orbis/%s", cfg->ha_url, file);
 
     snprintf(s_status, sizeof(s_status), "downloading %s", version);
     s_percent = 0;
@@ -163,9 +174,7 @@ static void ota_task(void *arg)
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "ota begin failed: %s", esp_err_to_name(err));
         snprintf(s_status, sizeof(s_status), "begin failed");
-        s_busy = false;
-        vTaskDelete(NULL);
-        return;
+        goto done;
     }
 
     const int total = esp_https_ota_get_image_size(handle);
@@ -199,17 +208,49 @@ static void ota_task(void *arg)
         snprintf(s_status, sizeof(s_status), "download failed");
     }
 
+done:
     s_busy = false;
+    if (req != NULL) {
+        free(req);
+    }
     vTaskDelete(NULL);
 }
 
-void ota_start_check(void)
+static void ota_launch(ota_req_t *req)
 {
     if (s_busy) {
+        free(req);
         return;
     }
     s_busy = true;
     s_percent = -1;
     snprintf(s_status, sizeof(s_status), "checking...");
-    xTaskCreate(ota_task, "ota", 8192, NULL, 5, NULL);
+    xTaskCreate(ota_task, "ota", 8192, req, 5, NULL);
+}
+
+void ota_start_check(void)
+{
+    ota_req_t *req = calloc(1, sizeof(ota_req_t));
+    if (req == NULL) {
+        return;
+    }
+    req->use_manifest = true;
+    ota_launch(req);
+}
+
+void ota_start_url(const char *url, const char *version)
+{
+    if (url == NULL || url[0] == '\0') {
+        return;
+    }
+    ota_req_t *req = calloc(1, sizeof(ota_req_t));
+    if (req == NULL) {
+        return;
+    }
+    req->use_manifest = false;
+    snprintf(req->url, sizeof(req->url), "%s", url);
+    if (version) {
+        snprintf(req->version, sizeof(req->version), "%s", version);
+    }
+    ota_launch(req);
 }

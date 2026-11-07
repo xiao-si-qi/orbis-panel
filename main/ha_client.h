@@ -27,9 +27,6 @@ esp_err_t ha_client_init(void);
 /** 加入关注列表（去重）。label 为 NULL 时用 friendly_name / object_id 兜底。 */
 esp_err_t ha_client_register(const char *entity_id, const char *label);
 
-/** 没有 JSON 布局时的兜底：自动挑 灯/开关 → 场景 → 传感器，最多 4+4+4 个。 */
-esp_err_t ha_client_autofill(void);
-
 /** 一次拉全量 /api/states，把关注列表里的名字/状态填好（启动时用，最快）。 */
 esp_err_t ha_client_fetch_all(void);
 

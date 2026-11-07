@@ -1,7 +1,9 @@
 #include <string.h>
+#include <stdio.h>
 
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -15,6 +17,11 @@ static const char *TAG = "settings";
 #define KEY_PASS      "pass"
 #define KEY_URL       "url"
 #define KEY_TOKEN     "token"
+#define KEY_MQTT_HOST "mqtt_host"
+#define KEY_MQTT_PORT "mqtt_port"
+#define KEY_MQTT_USER "mqtt_user"
+#define KEY_MQTT_PASS "mqtt_pass"
+#define KEY_DEVICE_ID "device_id"
 
 static app_settings_t s_cfg;
 
@@ -49,6 +56,11 @@ static esp_err_t config_save(void)
     err |= nvs_set_str(h, KEY_PASS, s_cfg.wifi_pass);
     err |= nvs_set_str(h, KEY_URL, s_cfg.ha_url);
     err |= nvs_set_str(h, KEY_TOKEN, s_cfg.ha_token);
+    err |= nvs_set_str(h, KEY_MQTT_HOST, s_cfg.mqtt_host);
+    err |= nvs_set_u16(h, KEY_MQTT_PORT, (uint16_t)s_cfg.mqtt_port);
+    err |= nvs_set_str(h, KEY_MQTT_USER, s_cfg.mqtt_user);
+    err |= nvs_set_str(h, KEY_MQTT_PASS, s_cfg.mqtt_pass);
+    err |= nvs_set_str(h, KEY_DEVICE_ID, s_cfg.device_id);
     if (err == ESP_OK) {
         err = nvs_commit(h);
     }
@@ -74,6 +86,14 @@ esp_err_t app_settings_init(void)
     nvs_read_str(h, KEY_PASS, s_cfg.wifi_pass, sizeof(s_cfg.wifi_pass));
     nvs_read_str(h, KEY_URL, s_cfg.ha_url, sizeof(s_cfg.ha_url));
     nvs_read_str(h, KEY_TOKEN, s_cfg.ha_token, sizeof(s_cfg.ha_token));
+    nvs_read_str(h, KEY_MQTT_HOST, s_cfg.mqtt_host, sizeof(s_cfg.mqtt_host));
+    nvs_read_str(h, KEY_MQTT_USER, s_cfg.mqtt_user, sizeof(s_cfg.mqtt_user));
+    nvs_read_str(h, KEY_MQTT_PASS, s_cfg.mqtt_pass, sizeof(s_cfg.mqtt_pass));
+    nvs_read_str(h, KEY_DEVICE_ID, s_cfg.device_id, sizeof(s_cfg.device_id));
+    uint16_t port = 0;
+    if (nvs_get_u16(h, KEY_MQTT_PORT, &port) == ESP_OK) {
+        s_cfg.mqtt_port = port;
+    }
     nvs_close(h);
 
     /* First boot: seed from secrets.h so a freshly flashed board just works */
@@ -86,6 +106,30 @@ esp_err_t app_settings_init(void)
     if (s_cfg.ha_url[0] == '\0' && APP_SECRET_HA_URL[0] != '\0') {
         copy_str(s_cfg.ha_url, sizeof(s_cfg.ha_url), APP_SECRET_HA_URL);
         copy_str(s_cfg.ha_token, sizeof(s_cfg.ha_token), APP_SECRET_HA_TOKEN);
+        seeded = true;
+    }
+    if (s_cfg.mqtt_host[0] == '\0' && APP_SECRET_MQTT_HOST[0] != '\0') {
+        copy_str(s_cfg.mqtt_host, sizeof(s_cfg.mqtt_host), APP_SECRET_MQTT_HOST);
+        s_cfg.mqtt_port = APP_SECRET_MQTT_PORT;
+        copy_str(s_cfg.mqtt_user, sizeof(s_cfg.mqtt_user), APP_SECRET_MQTT_USER);
+        copy_str(s_cfg.mqtt_pass, sizeof(s_cfg.mqtt_pass), APP_SECRET_MQTT_PASS);
+        seeded = true;
+    }
+    if (s_cfg.device_id[0] == '\0') {
+        copy_str(s_cfg.device_id, sizeof(s_cfg.device_id), APP_SECRET_DEVICE_ID);
+        seeded = true;
+    }
+    if (s_cfg.mqtt_port == 0) {
+        s_cfg.mqtt_port = 1883;
+    }
+    if (s_cfg.device_id[0] == '\0') {
+        uint8_t mac[6] = {0};
+        if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK) {
+            snprintf(s_cfg.device_id, sizeof(s_cfg.device_id), "orbis-%02x%02x", mac[4], mac[5]);
+        } else {
+            copy_str(s_cfg.device_id, sizeof(s_cfg.device_id), "orbis-0000");
+        }
+        ESP_LOGI(TAG, "generated device id: %s", s_cfg.device_id);
         seeded = true;
     }
     if (seeded) {
@@ -122,6 +166,27 @@ esp_err_t app_settings_update(const char *ssid, const char *pass, const char *ha
     }
     if (ha_token) {
         copy_str(s_cfg.ha_token, sizeof(s_cfg.ha_token), ha_token);
+    }
+    return config_save();
+}
+
+esp_err_t app_settings_update_mqtt(const char *host, int port, const char *user, const char *pass,
+                                   const char *device_id)
+{
+    if (host) {
+        copy_str(s_cfg.mqtt_host, sizeof(s_cfg.mqtt_host), host);
+    }
+    if (port > 0) {
+        s_cfg.mqtt_port = port;
+    }
+    if (user) {
+        copy_str(s_cfg.mqtt_user, sizeof(s_cfg.mqtt_user), user);
+    }
+    if (pass) {
+        copy_str(s_cfg.mqtt_pass, sizeof(s_cfg.mqtt_pass), pass);
+    }
+    if (device_id) {
+        copy_str(s_cfg.device_id, sizeof(s_cfg.device_id), device_id);
     }
     return config_save();
 }

@@ -147,6 +147,11 @@ static const char *PROV_HTML_FMT =
     "<label>Wi-Fi 密码</label><input name='pass' type='password' value='%s'>"
     "<label>HA 地址</label><input name='url' value='%s' placeholder='https://ha.example.com'>"
     "<label>HA 长期访问令牌</label><input name='token' value='%s'>"
+    "<label>MQTT 服务器（留空 = 不启用）</label><input name='mqtt_host' value='%s' placeholder='192.168.1.10'>"
+    "<label>MQTT 端口</label><input name='mqtt_port' value='%d'>"
+    "<label>MQTT 用户名</label><input name='mqtt_user' value='%s'>"
+    "<label>MQTT 密码</label><input name='mqtt_pass' type='password' value='%s'>"
+    "<label>设备 ID（主题里的名字）</label><input name='device_id' value='%s'>"
     "<button type='submit'>保存并重启</button></form></body></html>";
 
 static int hex2int(char c)
@@ -202,7 +207,8 @@ static esp_err_t prov_root_get(httpd_req_t *req)
     if (page == NULL) {
         return httpd_resp_send_500(req);
     }
-    snprintf(page, 4096, PROV_HTML_FMT, cfg->wifi_ssid, cfg->wifi_pass, cfg->ha_url, cfg->ha_token);
+    snprintf(page, 4096, PROV_HTML_FMT, cfg->wifi_ssid, cfg->wifi_pass, cfg->ha_url, cfg->ha_token,
+             cfg->mqtt_host, cfg->mqtt_port, cfg->mqtt_user, cfg->mqtt_pass, cfg->device_id);
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     esp_err_t err = httpd_resp_send(req, page, HTTPD_RESP_USE_STRLEN);
     free(page);
@@ -231,10 +237,20 @@ static esp_err_t prov_save_post(httpd_req_t *req)
     char pass[APP_WIFI_PASS_MAX] = {0};
     char url[APP_HA_URL_MAX] = {0};
     char token[APP_HA_TOKEN_MAX] = {0};
+    char mqtt_host[APP_MQTT_HOST_MAX] = {0};
+    char mqtt_port[8] = {0};
+    char mqtt_user[APP_MQTT_USER_MAX] = {0};
+    char mqtt_pass[APP_MQTT_PASS_MAX] = {0};
+    char device_id[APP_DEVICE_ID_MAX] = {0};
     form_get(body, "ssid", ssid, sizeof(ssid));
     form_get(body, "pass", pass, sizeof(pass));
     form_get(body, "url", url, sizeof(url));
     form_get(body, "token", token, sizeof(token));
+    form_get(body, "mqtt_host", mqtt_host, sizeof(mqtt_host));
+    form_get(body, "mqtt_port", mqtt_port, sizeof(mqtt_port));
+    form_get(body, "mqtt_user", mqtt_user, sizeof(mqtt_user));
+    form_get(body, "mqtt_pass", mqtt_pass, sizeof(mqtt_pass));
+    form_get(body, "device_id", device_id, sizeof(device_id));
 
     if (ssid[0] == '\0') {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ssid required");
@@ -243,12 +259,29 @@ static esp_err_t prov_save_post(httpd_req_t *req)
 
     ESP_LOGI(TAG, "saving settings: ssid='%s' ha='%s'", ssid, url);
     app_settings_update(ssid, pass, url, token);
+    app_settings_update_mqtt(mqtt_host, atoi(mqtt_port), mqtt_user, mqtt_pass, device_id);
 
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_sendstr(req, "<meta charset='utf-8'><h3>已保存，正在重启...</h3>");
 
     vTaskDelay(pdMS_TO_TICKS(1200));
     esp_restart();
+    return ESP_OK;
+}
+
+esp_err_t wifi_manager_web_start(void)
+{
+    if (s_httpd == NULL) {
+        httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
+        cfg.lru_purge_enable = true;
+        ESP_RETURN_ON_ERROR(httpd_start(&s_httpd, &cfg), TAG, "httpd start failed");
+
+        httpd_uri_t root = {.uri = "/", .method = HTTP_GET, .handler = prov_root_get};
+        httpd_uri_t save = {.uri = "/save", .method = HTTP_POST, .handler = prov_save_post};
+        httpd_register_uri_handler(s_httpd, &root);
+        httpd_register_uri_handler(s_httpd, &save);
+    }
+    ESP_LOGI(TAG, "settings page: http://<device-ip>/");
     return ESP_OK;
 }
 

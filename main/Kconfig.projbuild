@@ -6,44 +6,7 @@ menu "Orbis panel"
         default 5
         help
             How often each entity state is refreshed through the REST API.
-
-    config APP_ENTITY_1
-        string "Entity 1 (empty = auto discover)"
-        default ""
-        help
-            Home Assistant entity id, e.g. light.living_room.
-            Leave all four empty to auto-pick the first controllable entities
-            (light / switch / fan / input_boolean / script / scene).
-
-    config APP_ENTITY_2
-        string "Entity 2 (empty = auto discover)"
-        default ""
-
-    config APP_ENTITY_3
-        string "Entity 3 (empty = auto discover)"
-        default ""
-
-    config APP_ENTITY_4
-        string "Entity 4 (empty = auto discover)"
-        default ""
-
-    config APP_SENSOR_1
-        string "Sensor 1 (empty = auto discover)"
-        default ""
-        help
-            Read-only sensor entity id, e.g. sensor.living_room_temperature.
-            Leave empty to auto-pick temperature / humidity / power sensors.
-
-    config APP_SENSOR_2
-        string "Sensor 2 (empty = auto discover)"
-        default ""
-
-    config APP_SENSOR_3
-        string "Sensor 3 (empty = auto discover)"
-        default ""
-
-    config APP_SENSOR_4
-        string "Sensor 4 (empty = auto discover)"
-        default ""
+            The entity list comes from the layout pushed over MQTT
+            (orbis/<id>/cfg), not from a file on the device.
 
 endmenu

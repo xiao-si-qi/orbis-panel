@@ -24,35 +24,18 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "cJSON.h"
-#include "esp_crt_bundle.h"
-#include "esp_http_client.h"
+#include "nvs.h"
 #include "esp_log.h"
 
 #include "app_settings.h"
-#include "ha_client.h"
 #include "layout.h"
 
 static const char *TAG = "layout";
 
-#define LAYOUT_URL_SUFFIX "/local/orbis/layout.json"
-#define LAYOUT_BODY_MAX   (16 * 1024)
 
-static char s_body[LAYOUT_BODY_MAX];
-static int s_body_len;
-
-static esp_err_t http_event(esp_http_client_event_t *ev)
-{
-    if (ev->event_id == HTTP_EVENT_ON_DATA && ev->data && ev->data_len > 0) {
-        if (s_body_len + ev->data_len < LAYOUT_BODY_MAX) {
-            memcpy(s_body + s_body_len, ev->data, ev->data_len);
-            s_body_len += ev->data_len;
-            s_body[s_body_len] = '\0';
-        }
-    }
-    return ESP_OK;
-}
 
 tile_type_t layout_type_of(const char *entity_id)
 {
@@ -85,47 +68,15 @@ static void copy_str(char *dst, size_t dst_len, const char *src)
     dst[n] = '\0';
 }
 
-esp_err_t layout_fetch(layout_t *out)
+esp_err_t layout_parse(const char *json, layout_t *out)
 {
-    if (out == NULL) {
+    if (json == NULL || out == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
     memset(out, 0, sizeof(*out));
     copy_str(out->title, sizeof(out->title), "Home");
 
-    const app_settings_t *cfg = app_settings_get();
-    if (cfg->ha_url[0] == '\0') {
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    char url[APP_HA_URL_MAX + 64];
-    snprintf(url, sizeof(url), "%s%s", cfg->ha_url, LAYOUT_URL_SUFFIX);
-
-    esp_http_client_config_t http_cfg = {
-        .url = url,
-        .timeout_ms = 8000,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .buffer_size = 2048,
-        .event_handler = http_event,
-    };
-    esp_http_client_handle_t client = esp_http_client_init(&http_cfg);
-    if (client == NULL) {
-        return ESP_ERR_NO_MEM;
-    }
-
-    s_body_len = 0;
-    s_body[0] = '\0';
-    esp_err_t err = esp_http_client_perform(client);
-    const int status = esp_http_client_get_status_code(client);
-    esp_http_client_cleanup(client);
-
-    if (err != ESP_OK || status != 200 || s_body_len == 0) {
-        ESP_LOGW(TAG, "layout fetch failed (%s, HTTP %d, %d bytes)", esp_err_to_name(err), status, s_body_len);
-        return ESP_FAIL;
-    }
-    ESP_LOGI(TAG, "layout downloaded: %d bytes", s_body_len);
-
-    cJSON *root = cJSON_Parse(s_body);
+    cJSON *root = cJSON_Parse(json);
     if (root == NULL) {
         ESP_LOGE(TAG, "layout JSON parse failed");
         return ESP_ERR_INVALID_ARG;
@@ -196,41 +147,54 @@ esp_err_t layout_fetch(layout_t *out)
     }
 
     cJSON_Delete(root);
-
-    if (out->page_count == 0) {
-        ESP_LOGE(TAG, "layout has no usable page");
-        return ESP_ERR_NOT_FOUND;
-    }
-    ESP_LOGI(TAG, "layout: '%s', %d page(s)", out->title, out->page_count);
-    return ESP_OK;
+    return (out->page_count > 0) ? ESP_OK : ESP_ERR_NOT_FOUND;
 }
 
-void layout_fallback(layout_t *out)
-{
-    memset(out, 0, sizeof(*out));
-    copy_str(out->title, sizeof(out->title), "Home");
+#define NVS_LAYOUT_KEY "layout_json"
+#define NVS_LAYOUT_MAX (12 * 1024)
 
-    const int total = ha_client_count();
-    for (int i = 0; i < total; i++) {
-        const ha_entity_t *e = ha_client_at(i);
-        if (e == NULL) {
-            continue;
-        }
-        if (out->page_count == 0 || out->pages[out->page_count - 1].tile_count >= LAYOUT_TILES_PER_PAGE) {
-            if (out->page_count >= LAYOUT_MAX_PAGES) {
-                break;
-            }
-            layout_page_t *np = &out->pages[out->page_count];
-            const tile_type_t t = layout_type_of(e->entity_id);
-            snprintf(np->name, sizeof(np->name), "%s",
-                     t == TILE_SENSOR ? "Sensors" : (t == TILE_SCENE ? "Scenes" : "Devices"));
-            out->page_count++;
-        }
-        layout_page_t *lp = &out->pages[out->page_count - 1];
-        layout_tile_t *lt = &lp->tiles[lp->tile_count++];
-        copy_str(lt->entity, sizeof(lt->entity), e->entity_id);
-        copy_str(lt->label, sizeof(lt->label), e->name);
-        lt->type = layout_type_of(e->entity_id);
+esp_err_t layout_save_nvs(const char *json)
+{
+    if (json == NULL) {
+        return ESP_ERR_INVALID_ARG;
     }
-    ESP_LOGI(TAG, "fallback layout: %d page(s)", out->page_count);
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("app", NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_str(h, NVS_LAYOUT_KEY, json);
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t layout_load_nvs(layout_t *out)
+{
+    nvs_handle_t h;
+    if (nvs_open("app", NVS_READONLY, &h) != ESP_OK) {
+        return ESP_ERR_NOT_FOUND;
+    }
+    size_t len = 0;
+    esp_err_t err = nvs_get_str(h, NVS_LAYOUT_KEY, NULL, &len);
+    if (err != ESP_OK || len == 0 || len > NVS_LAYOUT_MAX) {
+        nvs_close(h);
+        return ESP_ERR_NOT_FOUND;
+    }
+    char *buf = malloc(len);
+    if (buf == NULL) {
+        nvs_close(h);
+        return ESP_ERR_NO_MEM;
+    }
+    err = nvs_get_str(h, NVS_LAYOUT_KEY, buf, &len);
+    nvs_close(h);
+    if (err != ESP_OK) {
+        free(buf);
+        return err;
+    }
+    err = layout_parse(buf, out);
+    free(buf);
+    return err;
 }
