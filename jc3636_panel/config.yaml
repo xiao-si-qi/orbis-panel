@@ -2,7 +2,7 @@ name: JC3636 Panel Editor
 version: "0.1.0"
 slug: jc3636_panel
 description: 在 Home Assistant 网页里编辑 JC3636W518 控制屏的 JSON 布局并发布
-url: https://github.com/yourname/jc3636w518
+url: https://github.com/xiao-si-qi/jc3636w518
 arch:
   - aarch64
   - amd64
