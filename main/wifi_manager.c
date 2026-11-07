@@ -133,6 +133,22 @@ int wifi_manager_get_rssi(void)
 /* 配网页面                                                                    */
 /* ------------------------------------------------------------------------- */
 
+/** 设备 ID 会进 MQTT 主题，只允许 a-z 0-9 - _ */
+static bool device_id_ok(const char *s)
+{
+    if (s == NULL || s[0] == '\0') {
+        return false;
+    }
+    size_t n = 0;
+    for (const char *p = s; *p; p++, n++) {
+        char c = *p;
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_')) {
+            return false;
+        }
+    }
+    return n < APP_DEVICE_ID_MAX;
+}
+
 static esp_err_t send_401(httpd_req_t *req)
 {
     httpd_resp_set_status(req, "401 Unauthorized");
@@ -298,6 +314,12 @@ static esp_err_t prov_save_post(httpd_req_t *req)
 
     if (ssid[0] == '\0') {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ssid required");
+        return ESP_FAIL;
+    }
+
+    if (device_id[0] != '\0' && !device_id_ok(device_id)) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                            "device id: only a-z 0-9 - _ (max 31 chars)");
         return ESP_FAIL;
     }
 
