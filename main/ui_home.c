@@ -94,6 +94,17 @@ typedef struct {
 /* 翻页                                                                       */
 /* ------------------------------------------------------------------------- */
 
+/* 标题用哪套字体：含非 ASCII（中文）就用内置 CJK 字体，纯英文用 Montserrat */
+static const lv_font_t *title_font_for(const char *text)
+{
+    for (const unsigned char *p = (const unsigned char *)text; *p; p++) {
+        if (*p >= 0x80) {
+            return &lv_font_noto_18_cjk;
+        }
+    }
+    return &lv_font_montserrat_24;
+}
+
 static bool is_status_page(int page)
 {
     return s_layout_valid && page == s_json_pages;
@@ -129,7 +140,10 @@ static void show_page(int page)
         }
     }
     if (s_title) {
-        lv_label_set_text(s_title, page_title(page));
+        const char *title = page_title(page);
+        lv_label_set_text(s_title, title);
+        lv_obj_set_style_text_font(s_title, title_font_for(title), 0);
+        lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 18);
     }
 }
 
@@ -465,9 +479,10 @@ static void build_ui(void)
 
     /* 标题 */
     s_title = lv_label_create(scr);
-    lv_label_set_text(s_title, s_layout_valid ? page_title(0) : "System");
+    const char *first_title = s_layout_valid ? page_title(0) : "System";
+    lv_label_set_text(s_title, first_title);
     lv_obj_set_style_text_color(s_title, COLOR_TEXT, 0);
-    lv_obj_set_style_text_font(s_title, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_font(s_title, title_font_for(first_title), 0);
     lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 18);
 
     /* 状态行 */

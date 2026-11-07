@@ -154,7 +154,7 @@ LVGL 通过组件管理器解析（本机组件仓库里有 9.2.x，可离线）
 布局不再从 HTTP 文件读，而是 **由 switchyard 通过 MQTT 下发**：
 
 ```
-orbis/<id>/cfg   (retained)   payload = 布局 JSON
+switchyard/<id>/cfg   (retained)   payload = 布局 JSON
 ```
 
 设备收到后立即应用、并存进 NVS（重启后先用它）。首次开机还没收到 cfg 时只显示
@@ -194,7 +194,7 @@ System 页（固件版本 / IP / MQTT 状态 / 设备 id）。
 - [ ] 时间显示（SNTP）
 - [x] 双 OTA 槽 + rollback + System 页（检查更新）
 - [ ] 布局热重载（现在要重启才生效）
-- [ ] MQTT：上报 `orbis/<id>/state`、订阅 `orbis/<id>/cmd`（接入 switchyard 台账）
+- [ ] MQTT：上报 `switchyard/<id>/state`、订阅 `switchyard/<id>/cmd`（接入 switchyard 台账）
 - [ ] WebSocket 订阅 `state_changed`，替代轮询
 - [ ] TF 卡壁纸/音效（SDMMC 引脚已在 `bsp_board.h` 定义）
 

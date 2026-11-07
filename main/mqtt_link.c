@@ -254,11 +254,11 @@ esp_err_t mqtt_link_start(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    snprintf(s_topic_state, sizeof(s_topic_state), "orbis/%s/state", mqtt_link_device_id());
-    snprintf(s_topic_avail, sizeof(s_topic_avail), "orbis/%s/availability", mqtt_link_device_id());
-    snprintf(s_topic_cmd, sizeof(s_topic_cmd), "orbis/%s/cmd", mqtt_link_device_id());
-    snprintf(s_topic_event, sizeof(s_topic_event), "orbis/%s/event", mqtt_link_device_id());
-    snprintf(s_topic_cfg, sizeof(s_topic_cfg), "orbis/%s/cfg", mqtt_link_device_id());
+    snprintf(s_topic_state, sizeof(s_topic_state), "switchyard/%s/state", mqtt_link_device_id());
+    snprintf(s_topic_avail, sizeof(s_topic_avail), "switchyard/%s/availability", mqtt_link_device_id());
+    snprintf(s_topic_cmd, sizeof(s_topic_cmd), "switchyard/%s/cmd", mqtt_link_device_id());
+    snprintf(s_topic_event, sizeof(s_topic_event), "switchyard/%s/event", mqtt_link_device_id());
+    snprintf(s_topic_cfg, sizeof(s_topic_cfg), "switchyard/%s/cfg", mqtt_link_device_id());
     snprintf(s_client_id, sizeof(s_client_id), "orbis-%s", mqtt_link_device_id());
     s_last_seq = load_seq();
 
@@ -266,7 +266,7 @@ esp_err_t mqtt_link_start(void)
     snprintf(uri, sizeof(uri), "mqtt://%s:%d", cfg->mqtt_host, cfg->mqtt_port);
 
     char lwt_topic[96];
-    snprintf(lwt_topic, sizeof(lwt_topic), "orbis/%s/availability", mqtt_link_device_id());
+    snprintf(lwt_topic, sizeof(lwt_topic), "switchyard/%s/availability", mqtt_link_device_id());
 
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = uri,
