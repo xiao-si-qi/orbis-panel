@@ -183,6 +183,10 @@ static void handle_cmd(const char *payload)
             /* 只有 {"cmd":"ota"}：走 manifest（HA 的「检查更新」按钮） */
             ota_start_check();
         }
+    } else if (strcmp(cmd, "state") == 0) {
+        /* 让设备立刻上报一次（switchyard 的「检查更新」用，不用等 30s 周期） */
+        mqtt_link_publish_state();
+        mqtt_link_publish_meta();
     } else if (strcmp(cmd, "set") == 0) {
         const cJSON *jkey = cJSON_GetObjectItemCaseSensitive(root, "key");
         const cJSON *jval = cJSON_GetObjectItemCaseSensitive(root, "value");
