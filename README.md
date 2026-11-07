@@ -183,6 +183,19 @@ System 页（固件版本 / IP / MQTT 状态 / 设备 id）。
 - `label` 省略时用 HA 的 `friendly_name`；
 - 改完布局在 switchyard 里点「下发」，设备**立即生效**，不用重启、不用重烧。
 
+## MQTT 命令（switchyard → 设备）
+
+主题 `switchyard/<id>/cmd`，每条带 `seq`（设备按序号去重，重连后不会重复执行）：
+
+| cmd | 作用 |
+|---|---|
+| `{"cmd":"ota","url":...,"version":...}` | 直接下载指定固件 |
+| `{"cmd":"ota"}` | 走 manifest（`/local/switchyard/<id>/firmware.json`）|
+| `{"cmd":"reboot"}` | 重启 |
+| `{"cmd":"set","key":"brightness","value":50}` | 调背光（10–100）|
+| `{"cmd":"state"}` | 立刻上报 `state` + `meta`（不等 30s 周期）|
+| `{"cmd":"get","key":"layout"}` | 把 NVS 里存的布局原样回发到 `cfg` 主题 |
+
 ## 已实现 / 待办
 
 - [x] ST77916 QSPI 显示 + 背光 PWM + LVGL 9
