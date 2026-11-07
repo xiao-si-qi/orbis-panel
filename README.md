@@ -30,6 +30,20 @@
 └────────────────────────────────────────────────┘
 ```
 
+## 文档导航
+
+| 想做什么 | 看这里 |
+|---|---|
+| 编译 / 烧录固件 | 本页 [编译 & 烧录](#编译--烧录) |
+| 改屏幕显示什么（页面 / 卡片） | [布局：JSON 驱动](#布局json-驱动改布局不用重烧固件) · 示例 [docs/layout.example.json](docs/layout.example.json) |
+| 第一次联网 / 填 HA 地址 | [首次配网](#首次配网设置页) |
+| 中文显示不全 / 想换字体 | [docs/FONT.md](docs/FONT.md) |
+| 恢复原厂固件 | [恢复原厂固件](#恢复原厂固件) |
+| **在 HA 里编辑布局、上传固件、看设备台账** | **→ [switchyard](https://github.com/xiao-si-qi/switchyard)**（独立仓库的 HA 加载项） |
+| 自制设备接入的统一 MQTT 约定 | [PROTOCOL.md](https://github.com/xiao-si-qi/switchyard/blob/main/docs/PROTOCOL.md) |
+
+> 本仓库**只维护圆屏固件**；插件、协议、设备管理都在 [switchyard](https://github.com/xiao-si-qi/switchyard)。
+
 ## 硬件
 
 | 项目 | 参数 |
