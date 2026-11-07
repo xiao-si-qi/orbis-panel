@@ -189,6 +189,37 @@ LVGL 通过组件管理器解析（本机组件仓库里有 9.2.x，可离线）
 在 HA 网页里编辑页面/卡片并发布到 `/config/www/orbis/layout.json`，上传固件到同目录。
 本仓库只维护圆屏固件本身。
 
+## System 页与固件 OTA
+
+屏幕的最后一页（最后一个圆点）是固件自己画的 **System 页**：
+
+```
+固件  v0.1.1
+WiFi  -72 dBm
+地址  192.168.1.38
+运行  0h42m
+内存  131 KB
+        [ 检查更新 ]
+```
+
+点「检查更新」会去拉 `<ha>/local/orbis/firmware.json`，版本号和当前固件不同就下载
+`firmware.bin`，写进**另一个 OTA 槽**，完成后重启。
+
+分区表是双槽 + rollback（`partitions.csv`）：
+
+| 分区 | 大小 | 说明 |
+|---|---|---|
+| ota_0 / ota_1 | 4 MB × 2 | 新固件写非活动槽，当前固件不受影响 |
+| otadata | 8 KB | 记录从哪个槽启动 |
+| assets | 7.9 MB | 暂空，留给图片/字体/缓存 |
+
+**断电安全**：`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`，启动成功后调用
+`esp_ota_mark_app_valid_cancel_rollback()`；升级中途断电仍启动旧固件，
+新固件若启动失败自动回滚。
+
+上传固件与触发升级用 [switchyard](https://github.com/xiao-si-qi/switchyard) 加载项，
+也可以通过 `idf.py -p <port> flash` 直接烧。
+
 ## 已实现 / 待办
 
 - [x] ST77916 QSPI 显示 + 背光 PWM + LVGL 9
@@ -198,7 +229,9 @@ LVGL 通过组件管理器解析（本机组件仓库里有 9.2.x，可离线）
 - [x] JSON 布局（页面 / 卡片 / 实体全由 HA 上的 JSON 决定）
 - [x] GB2312 中文字体（Noto Sans SC，OFL）
 - [ ] 时间显示（SNTP）
+- [x] 双 OTA 槽 + rollback + System 页（检查更新）
 - [ ] 布局热重载（现在要重启才生效）
+- [ ] MQTT：上报 `orbis/<id>/state`、订阅 `orbis/<id>/cmd`（接入 switchyard 台账）
 - [ ] WebSocket 订阅 `state_changed`，替代轮询
 - [ ] TF 卡壁纸/音效（SDMMC 引脚已在 `bsp_board.h` 定义）
 
