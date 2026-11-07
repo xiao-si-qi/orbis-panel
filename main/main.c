@@ -1,5 +1,5 @@
 /*
- * JC3636W518 · Home Assistant 家庭控制屏
+ * Orbis Panel · JC3636W518 圆屏 Home Assistant 控制屏
  *
  * 启动顺序：
  *   1. NVS / 配置
@@ -80,7 +80,7 @@ static void network_task(void *arg)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "JC3636W518 HA control panel booting");
+    ESP_LOGI(TAG, "Orbis Panel booting (JC3636W518)");
 
     ESP_ERROR_CHECK(app_settings_init());
 

@@ -95,7 +95,7 @@ orbis-panel/
 
 ```powershell
 . C:\Espressif\tools\Microsoft.v5.5.4.PowerShell_profile.ps1
-cd C:\Users\xiaosiqi\Documents\esp32\jc3636w518
+cd C:\path\to\orbis-panel
 
 idf.py set-target esp32s3      # 只需一次
 idf.py build

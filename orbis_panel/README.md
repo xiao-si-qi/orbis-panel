@@ -4,7 +4,7 @@
 `/config/www/orbis/layout.json`，屏幕开机时从这个地址读取布局。
 
 ```
-jc3636w518/ha_addon/
+orbis-panel/
 ├── repository.yaml              # add-on 仓库描述（把这个目录作为仓库添加）
 └── orbis_panel/
     ├── config.yaml              # 插件元数据（ingress 面板、映射 /config）
