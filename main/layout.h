@@ -44,6 +44,9 @@ esp_err_t layout_parse(const char *json, layout_t *out);
 /** 把布局 JSON 存进 NVS（设备重启后先用它）。 */
 esp_err_t layout_save_nvs(const char *json);
 
+/** 把 NVS 里那份布局 JSON 原样拷出来（设备回读用）。 */
+esp_err_t layout_get_nvs_json(char *buf, size_t len);
+
 /** 从 NVS 读上一次下发的布局；没有则返回 ESP_ERR_NOT_FOUND。 */
 esp_err_t layout_load_nvs(layout_t *out);
 

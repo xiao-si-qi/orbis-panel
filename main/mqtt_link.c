@@ -187,6 +187,21 @@ static void handle_cmd(const char *payload)
         /* 让设备立刻上报一次（switchyard 的「检查更新」用，不用等 30s 周期） */
         mqtt_link_publish_state();
         mqtt_link_publish_meta();
+    } else if (strcmp(cmd, "get") == 0) {
+        /* switchyard 想回读设备当前的布局：把 NVS 里那份原样发回 cfg 主题 */
+        const cJSON *jkey = cJSON_GetObjectItemCaseSensitive(root, "key");
+        if (cJSON_IsString(jkey) && strcmp(jkey->valuestring, "layout") == 0) {
+            char *buf = malloc(12 * 1024);
+            if (buf != NULL) {
+                if (layout_get_nvs_json(buf, 12 * 1024) == ESP_OK) {
+                    publish_retained(s_topic_cfg, buf);
+                    ESP_LOGI(TAG, "cfg: sent current layout (%u bytes)", (unsigned)strlen(buf));
+                } else {
+                    ESP_LOGW(TAG, "cfg: no layout stored yet");
+                }
+                free(buf);
+            }
+        }
     } else if (strcmp(cmd, "set") == 0) {
         const cJSON *jkey = cJSON_GetObjectItemCaseSensitive(root, "key");
         const cJSON *jval = cJSON_GetObjectItemCaseSensitive(root, "value");

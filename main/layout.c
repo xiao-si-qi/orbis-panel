@@ -171,6 +171,26 @@ esp_err_t layout_save_nvs(const char *json)
     return err;
 }
 
+esp_err_t layout_get_nvs_json(char *buf, size_t len)
+{
+    if (buf == NULL || len == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    nvs_handle_t h;
+    if (nvs_open("app", NVS_READONLY, &h) != ESP_OK) {
+        return ESP_ERR_NOT_FOUND;
+    }
+    size_t need = 0;
+    esp_err_t err = nvs_get_str(h, NVS_LAYOUT_KEY, NULL, &need);
+    if (err != ESP_OK || need == 0 || need > len) {
+        nvs_close(h);
+        return ESP_ERR_INVALID_SIZE;
+    }
+    err = nvs_get_str(h, NVS_LAYOUT_KEY, buf, &need);
+    nvs_close(h);
+    return err;
+}
+
 esp_err_t layout_load_nvs(layout_t *out)
 {
     nvs_handle_t h;
