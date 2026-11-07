@@ -177,7 +177,7 @@ static void make_tile(lv_obj_t *parent, int page, int slot, int col, int row)
     lv_obj_set_style_text_font(label, &lv_font_noto_18_cjk, 0);
     lv_obj_set_style_text_color(label, COLOR_TEXT, 0);
     lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(label, CARD_W - 24);
+    lv_obj_set_size(label, CARD_W - 24, 42); /* 最多两行，超出打点 */
     lv_obj_align(label, LV_ALIGN_TOP_LEFT, 0, 0);
 
     lv_obj_t *value = lv_label_create(card);
@@ -248,8 +248,16 @@ static void refresh_values(void)
                 continue;
             }
 
-            const char *txt = strcmp(e->state, "on") == 0 ? "ON"
-                            : (strcmp(e->state, "off") == 0 ? "OFF" : (e->fresh ? e->state : "--"));
+            const char *txt;
+            if (!e->fresh || strcmp(e->state, "unavailable") == 0 || strcmp(e->state, "unknown") == 0) {
+                txt = "--";
+            } else if (strcmp(e->state, "on") == 0) {
+                txt = "ON";
+            } else if (strcmp(e->state, "off") == 0) {
+                txt = "OFF";
+            } else {
+                txt = e->state;
+            }
             lv_label_set_text(w->value, txt);
             lv_obj_set_style_bg_color(w->card, e->on ? COLOR_CARD_ON : COLOR_CARD, 0);
             lv_obj_set_style_text_color(w->value, e->on ? COLOR_TEXT : COLOR_MUTED, 0);

@@ -106,15 +106,17 @@ def main():
         px = img.load()
 
         start = len(bitmap)
+        # LVGL unpacks 4bpp glyphs as one continuous nibble stream (no per-row
+        # padding), so pack row-major across the whole glyph and only pad the
+        # very last nibble to a byte boundary.
+        nibbles = []
         for row in range(h):
-            col = 0
-            while col < w:
-                hi = min(15, int((px[col, row] + 8) / 17))
-                lo = 0
-                if col + 1 < w:
-                    lo = min(15, int((px[col + 1, row] + 8) / 17))
-                bitmap.append(((hi << 4) | lo) & 0xFF)
-                col += 2
+            for col in range(w):
+                nibbles.append(min(15, int((px[col, row] + 8) / 17)))
+        if len(nibbles) % 2:
+            nibbles.append(0)
+        for i in range(0, len(nibbles), 2):
+            bitmap.append(((nibbles[i] << 4) | nibbles[i + 1]) & 0xFF)
 
         glyphs.append((cp, start, adv_w, w, h, x0, -y1))
 

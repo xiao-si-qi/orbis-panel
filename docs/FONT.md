@@ -41,3 +41,19 @@ python tools/gen_cjk_font.py --size 18 --font C:/Windows/Fonts/NotoSansSC-VF.ttf
 ```
 
 如果换成静态字体（无 variation），脚本会打印 "variation not applied" 并继续，不影响生成。
+
+## 4bpp 打包注意（另一个踩过的坑）
+
+LVGL 解包 4bpp 字形时是**一整条连续的 nibble 流**（`lv_font_fmt_txt.c` 里 `i = i & 1`，
+`bitmap_in` 只在每两个像素后前进一步，行之间**没有**补齐），所以生成时不能按行对齐：
+
+- 正确：按行优先把所有像素压成 nibble 序列，最后如果总数是奇数才补一个 0 nibble；
+- 错误：每行补齐到字节边界——奇数宽度的字形（如 `I` 宽 5px、`O` 宽 13px）从第二行起会
+  整体错半个字节，屏幕上表现为英文乱码/错字，而偶数宽度的汉字看起来正常。
+
+这个 bug 的表现非常迷惑：中文全对，英文全错。生成脚本已按连续流打包，并可用下面的方式自检
+（把 C 数组解回像素和 Pillow 的渲染逐像素比对，应为 0 差异）：
+
+```python
+# 取 glyph_dsc[gid] 的 bitmap_index/box_w/box_h，按连续 nibble 解码后与 Pillow 比对
+```
