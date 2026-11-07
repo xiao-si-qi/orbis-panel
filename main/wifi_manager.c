@@ -144,13 +144,13 @@ static const char *PROV_HTML_FMT =
     "<p>填写家里 Wi-Fi 和 Home Assistant 连接信息，保存后设备自动重启。</p>"
     "<form method='post' action='/save'>"
     "<label>Wi-Fi 名称 (SSID)</label><input name='ssid' value='%s'>"
-    "<label>Wi-Fi 密码</label><input name='pass' type='password' value='%s'>"
+    "<label>Wi-Fi 密码</label><input name='pass' type='password' placeholder='已保存，留空表示不修改'>"
     "<label>HA 地址</label><input name='url' value='%s' placeholder='https://ha.example.com'>"
-    "<label>HA 长期访问令牌</label><input name='token' value='%s'>"
+    "<label>HA 长期访问令牌</label><input name='token' type='password' placeholder='已保存，留空表示不修改'>"
     "<label>MQTT 服务器（留空 = 不启用）</label><input name='mqtt_host' value='%s' placeholder='192.168.1.10'>"
     "<label>MQTT 端口</label><input name='mqtt_port' value='%d'>"
     "<label>MQTT 用户名</label><input name='mqtt_user' value='%s'>"
-    "<label>MQTT 密码</label><input name='mqtt_pass' type='password' value='%s'>"
+    "<label>MQTT 密码</label><input name='mqtt_pass' type='password' placeholder='已保存，留空表示不修改'>"
     "<label>设备 ID（主题里的名字）</label><input name='device_id' value='%s'>"
     "<button type='submit'>保存并重启</button></form></body></html>";
 
@@ -207,8 +207,8 @@ static esp_err_t prov_root_get(httpd_req_t *req)
     if (page == NULL) {
         return httpd_resp_send_500(req);
     }
-    snprintf(page, 4096, PROV_HTML_FMT, cfg->wifi_ssid, cfg->wifi_pass, cfg->ha_url, cfg->ha_token,
-             cfg->mqtt_host, cfg->mqtt_port, cfg->mqtt_user, cfg->mqtt_pass, cfg->device_id);
+    snprintf(page, 4096, PROV_HTML_FMT, cfg->wifi_ssid, cfg->ha_url, cfg->mqtt_host, cfg->mqtt_port,
+             cfg->mqtt_user, cfg->device_id);
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     esp_err_t err = httpd_resp_send(req, page, HTTPD_RESP_USE_STRLEN);
     free(page);
@@ -258,8 +258,16 @@ static esp_err_t prov_save_post(httpd_req_t *req)
     }
 
     ESP_LOGI(TAG, "saving settings: ssid='%s' ha='%s'", ssid, url);
-    app_settings_update(ssid, pass, url, token);
-    app_settings_update_mqtt(mqtt_host, atoi(mqtt_port), mqtt_user, mqtt_pass, device_id);
+    /* 空值 = 保持原值（密码/令牌不回填，页面上留空就表示不改） */
+    app_settings_update(ssid,
+                        pass[0] ? pass : NULL,
+                        url[0] ? url : NULL,
+                        token[0] ? token : NULL);
+    app_settings_update_mqtt(mqtt_host[0] ? mqtt_host : NULL,
+                             atoi(mqtt_port),
+                             mqtt_user[0] ? mqtt_user : NULL,
+                             mqtt_pass[0] ? mqtt_pass : NULL,
+                             device_id[0] ? device_id : NULL);
 
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_sendstr(req, "<meta charset='utf-8'><h3>已保存，正在重启...</h3>");
