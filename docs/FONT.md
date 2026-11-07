@@ -29,3 +29,15 @@ python tools/gen_cjk_font.py --size 18 --font C:/Windows/Fonts/NotoSansSC-VF.ttf
   已替换成 Noto；如果你 fork 了旧版本，请重新生成字体。
 - 生成的是**位图**（每个字形的像素），不是字体文件本身；仍建议在 README / LICENSE 里
   标注字体来源与 OFL。
+
+## 变量字体注意（踩过的坑）
+
+`NotoSansSC-VF.ttf` 是**变量字体**，默认实例是 **Thin（wght=100）**，直接栅格化会让
+英文/数字的笔画细到在 4bpp 下几乎消失，屏幕上看就像乱码（中文笔画多反而正常）。
+生成脚本默认会用 `set_variation_by_name("Regular")` 切到 Regular：
+
+```powershell
+python tools/gen_cjk_font.py --size 18 --font C:/Windows/Fonts/NotoSansSC-VF.ttf --variation Regular --name lv_font_noto_18_cjk
+```
+
+如果换成静态字体（无 variation），脚本会打印 "variation not applied" 并继续，不影响生成。

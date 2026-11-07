@@ -57,6 +57,8 @@ def main():
     ap.add_argument("--size", type=int, default=18)
     ap.add_argument("--font", default=r"C:\Windows\Fonts\msyh.ttc")
     ap.add_argument("--index", type=int, default=0)
+    ap.add_argument("--variation", default="Regular",
+                    help="variable font instance name (Noto Sans SC defaults to Thin!)")
     ap.add_argument("--out-dir", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "main", "fonts"))
     ap.add_argument("--name", default=None)
     args = ap.parse_args()
@@ -67,6 +69,11 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     font = ImageFont.truetype(args.font, size, index=args.index)
+    try:
+        font.set_variation_by_name(args.variation)
+        print("variation: %s -> %s" % (args.variation, font.getname()))
+    except Exception as exc:  # static font, or name not available
+        print("variation not applied (%s)" % exc)
     ascent, descent = font.getmetrics()
     line_height = ascent + descent
     print("font=%s size=%d ascent=%d descent=%d line_height=%d" % (args.font, size, ascent, descent, line_height))
