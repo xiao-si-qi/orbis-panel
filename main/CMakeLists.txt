@@ -1,0 +1,31 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "app_settings.c"
+        "wifi_manager.c"
+        "ha_client.c"
+        "layout.c"
+        "ui_home.c"
+        "bsp_display.c"
+        "bsp_touch.c"
+        "bsp_lvgl.c"
+        "fonts/lv_font_noto_18_cjk.c"
+    INCLUDE_DIRS "." "fonts"
+    REQUIRES
+        esp_lcd
+        esp_driver_spi
+        esp_driver_gpio
+        esp_driver_ledc
+        esp_driver_i2c
+        esp_timer
+        esp_http_client
+        esp_http_server
+        esp_wifi
+        esp_netif
+        json
+        mbedtls
+        nvs_flash
+        esp_lcd_st77916
+        cst816s
+        lvgl
+)

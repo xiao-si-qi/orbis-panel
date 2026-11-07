@@ -1,0 +1,522 @@
+/**
+ * Home Assistant REST 客户端（通用实体关注列表）。
+ *
+ *  - 复用同一个 esp_http_client + keep-alive，避免每次 TLS 握手；
+ *  - 启动时一次拉 /api/states，把关注列表的名字/状态/单位全部填好；
+ *  - 之后按 CONFIG_APP_POLL_INTERVAL_S 逐个刷新；
+ *  - 不做完整 JSON 解析：只扫描 entity_id / state / friendly_name / unit 字段。
+ */
+
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
+#include "esp_crt_bundle.h"
+#include "esp_http_client.h"
+#include "esp_heap_caps.h"
+#include "esp_log.h"
+#include "sdkconfig.h"
+
+#include "app_settings.h"
+#include "ha_client.h"
+
+static const char *TAG = "ha";
+
+#define HA_HTTP_TIMEOUT_MS  10000
+#define HA_STATES_BUF_SIZE  (128 * 1024)
+
+static esp_http_client_handle_t s_client;
+static SemaphoreHandle_t s_lock;
+static char s_base[APP_HA_URL_MAX];
+static char s_token[APP_HA_TOKEN_MAX];
+static char *s_buf;
+static size_t s_buf_len;
+
+static ha_entity_t s_entities[HA_MAX_ENTITIES];
+static int s_count;
+
+/* ------------------------------------------------------------------------- */
+/* HTTP                                                                       */
+/* ------------------------------------------------------------------------- */
+
+static esp_err_t http_event_handler(esp_http_client_event_t *ev)
+{
+    if (ev->event_id == HTTP_EVENT_ON_DATA && ev->data && ev->data_len > 0) {
+        if (s_buf_len + (size_t)ev->data_len < HA_STATES_BUF_SIZE) {
+            memcpy(s_buf + s_buf_len, ev->data, ev->data_len);
+            s_buf_len += ev->data_len;
+            s_buf[s_buf_len] = '\0';
+        }
+    }
+    return ESP_OK;
+}
+
+static esp_err_t client_create(void)
+{
+    if (s_client) {
+        return ESP_OK;
+    }
+    const esp_http_client_config_t cfg = {
+        .url = s_base,
+        .timeout_ms = HA_HTTP_TIMEOUT_MS,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .buffer_size = 2048,
+        .buffer_size_tx = 512,
+        .keep_alive_enable = true,
+        .event_handler = http_event_handler,
+    };
+    s_client = esp_http_client_init(&cfg);
+    return s_client ? ESP_OK : ESP_ERR_NO_MEM;
+}
+
+static void set_auth_header(void)
+{
+    static char auth[APP_HA_TOKEN_MAX + 16];
+    snprintf(auth, sizeof(auth), "Bearer %s", s_token);
+    esp_http_client_set_header(s_client, "Authorization", auth);
+    esp_http_client_set_header(s_client, "Accept", "application/json");
+}
+
+static int http_get(const char *url)
+{
+    if (client_create() != ESP_OK) {
+        return -1;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    set_auth_header();
+    esp_http_client_set_method(s_client, HTTP_METHOD_GET);
+    esp_http_client_set_url(s_client, url);
+    s_buf_len = 0;
+    s_buf[0] = '\0';
+
+    int status = -1;
+    if (esp_http_client_perform(s_client) == ESP_OK) {
+        status = esp_http_client_get_status_code(s_client);
+    }
+    xSemaphoreGive(s_lock);
+    if (status != 200) {
+        ESP_LOGW(TAG, "GET %s -> %d", url, status);
+    }
+    return status;
+}
+
+static int http_post_service(const char *domain, const char *service, const char *entity_id)
+{
+    if (client_create() != ESP_OK) {
+        return -1;
+    }
+    char url[APP_HA_URL_MAX + 64];
+    snprintf(url, sizeof(url), "%s/api/services/%s/%s", s_base, domain, service);
+    char body[128];
+    snprintf(body, sizeof(body), "{\"entity_id\":\"%.95s\"}", entity_id);
+
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    set_auth_header();
+    esp_http_client_set_header(s_client, "Content-Type", "application/json");
+    esp_http_client_set_method(s_client, HTTP_METHOD_POST);
+    esp_http_client_set_url(s_client, url);
+    esp_http_client_set_post_field(s_client, body, (int)strlen(body));
+
+    int status = -1;
+    if (esp_http_client_perform(s_client) == ESP_OK) {
+        status = esp_http_client_get_status_code(s_client);
+    }
+    xSemaphoreGive(s_lock);
+    ESP_LOGI(TAG, "%s/%s %s -> %d", domain, service, entity_id, status);
+    return status;
+}
+
+/* ------------------------------------------------------------------------- */
+/* 解析工具                                                                    */
+/* ------------------------------------------------------------------------- */
+
+static void str_copy(char *dst, size_t dst_len, const char *src)
+{
+    size_t n = strlen(src);
+    if (n >= dst_len) {
+        n = dst_len - 1;
+    }
+    memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
+static bool json_str_in(const char *start, const char *end, const char *key, char *out, size_t out_len)
+{
+    char pattern[48];
+    snprintf(pattern, sizeof(pattern), "\"%s\":\"", key);
+    const char *p = strstr(start, pattern);
+    if (p == NULL || (end != NULL && p >= end)) {
+        out[0] = '\0';
+        return false;
+    }
+    p += strlen(pattern);
+    size_t n = 0;
+    while (*p != '\0' && *p != '"' && (end == NULL || p < end) && n + 1 < out_len) {
+        out[n++] = *p++;
+    }
+    out[n] = '\0';
+    return n > 0;
+}
+
+/* ------------------------------------------------------------------------- */
+/* 关注列表                                                                    */
+/* ------------------------------------------------------------------------- */
+
+esp_err_t ha_client_register(const char *entity_id, const char *label)
+{
+    if (entity_id == NULL || entity_id[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+    for (int i = 0; i < s_count; i++) {
+        if (strcmp(s_entities[i].entity_id, entity_id) == 0) {
+            if (label && label[0] && !s_entities[i].name[0]) {
+                str_copy(s_entities[i].name, sizeof(s_entities[i].name), label);
+            }
+            return ESP_OK;
+        }
+    }
+    if (s_count >= HA_MAX_ENTITIES) {
+        ESP_LOGW(TAG, "entity list full (%d)", HA_MAX_ENTITIES);
+        return ESP_ERR_NO_MEM;
+    }
+
+    ha_entity_t *e = &s_entities[s_count];
+    memset(e, 0, sizeof(*e));
+    str_copy(e->entity_id, sizeof(e->entity_id), entity_id);
+    if (label && label[0] != '\0') {
+        str_copy(e->name, sizeof(e->name), label);
+    }
+    e->valid = true;
+    e->fresh = false;
+    strcpy(e->state, "?");
+    s_count++;
+    return ESP_OK;
+}
+
+int ha_client_count(void)
+{
+    return s_count;
+}
+
+const ha_entity_t *ha_client_at(int idx)
+{
+    if (idx < 0 || idx >= s_count) {
+        return NULL;
+    }
+    return &s_entities[idx];
+}
+
+const ha_entity_t *ha_client_find(const char *entity_id)
+{
+    if (entity_id == NULL) {
+        return NULL;
+    }
+    for (int i = 0; i < s_count; i++) {
+        if (strcmp(s_entities[i].entity_id, entity_id) == 0) {
+            return &s_entities[i];
+        }
+    }
+    return NULL;
+}
+
+/* ------------------------------------------------------------------------- */
+/* 初始化                                                                     */
+/* ------------------------------------------------------------------------- */
+
+esp_err_t ha_client_init(void)
+{
+    const app_settings_t *cfg = app_settings_get();
+    if (!app_settings_has_ha()) {
+        ESP_LOGE(TAG, "HA url/token missing");
+        return ESP_ERR_INVALID_STATE;
+    }
+    snprintf(s_base, sizeof(s_base), "%s", cfg->ha_url);
+    snprintf(s_token, sizeof(s_token), "%s", cfg->ha_token);
+
+    if (s_buf == NULL) {
+        s_buf = heap_caps_malloc(HA_STATES_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (s_buf == NULL) {
+            s_buf = malloc(HA_STATES_BUF_SIZE);
+        }
+        if (s_buf == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+    if (s_lock == NULL) {
+        s_lock = xSemaphoreCreateMutex();
+        if (s_lock == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+    ESP_LOGI(TAG, "HA client ready: %s", s_base);
+    return client_create();
+}
+
+/* ------------------------------------------------------------------------- */
+/* 全量刷新                                                                    */
+/* ------------------------------------------------------------------------- */
+
+static void parse_entity_object(ha_entity_t *e, const char *obj_start, const char *obj_end)
+{
+    char state[24] = {0};
+    if (json_str_in(obj_start, obj_end, "state", state, sizeof(state))) {
+        str_copy(e->state, sizeof(e->state), state);
+        e->on = (strcmp(state, "on") == 0);
+        e->fresh = true;
+    }
+    if (e->name[0] == '\0') {
+        char fn[48] = {0};
+        if (json_str_in(obj_start, obj_end, "friendly_name", fn, sizeof(fn))) {
+            str_copy(e->name, sizeof(e->name), fn);
+        } else {
+            const char *dot = strchr(e->entity_id, '.');
+            const char *obj = dot ? dot + 1 : e->entity_id;
+            str_copy(e->name, sizeof(e->name), obj);
+        }
+    }
+    char unit[12] = {0};
+    if (json_str_in(obj_start, obj_end, "unit_of_measurement", unit, sizeof(unit))) {
+        str_copy(e->unit, sizeof(e->unit), unit);
+    }
+}
+
+esp_err_t ha_client_fetch_all(void)
+{
+    char url[APP_HA_URL_MAX + 32];
+    snprintf(url, sizeof(url), "%s/api/states", s_base);
+    if (http_get(url) != 200) {
+        return ESP_FAIL;
+    }
+    if (s_buf_len >= HA_STATES_BUF_SIZE - 1) {
+        ESP_LOGW(TAG, "states response truncated at %d KB", HA_STATES_BUF_SIZE / 1024);
+    }
+
+    /* 每个关注实体在整包 JSON 里定位一次，避免解析整个数组 */
+    for (int i = 0; i < s_count; i++) {
+        char needle[128];
+        snprintf(needle, sizeof(needle), "\"entity_id\":\"%.95s\"", s_entities[i].entity_id);
+        const char *p = strstr(s_buf, needle);
+        if (p == NULL) {
+            ESP_LOGW(TAG, "%s not found in /api/states", s_entities[i].entity_id);
+            s_entities[i].fresh = false;
+            continue;
+        }
+        const char *obj_end = strstr(p + strlen(needle), "\"entity_id\":\"");
+        if (obj_end == NULL) {
+            obj_end = s_buf + s_buf_len;
+        }
+        parse_entity_object(&s_entities[i], p, obj_end);
+    }
+    return ESP_OK;
+}
+
+esp_err_t ha_client_refresh_at(int idx)
+{
+    if (idx < 0 || idx >= s_count) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    ha_entity_t *e = &s_entities[idx];
+
+    char url[APP_HA_URL_MAX + 160];
+    snprintf(url, sizeof(url), "%s/api/states/%.95s", s_base, e->entity_id);
+    if (http_get(url) != 200) {
+        e->fresh = false;
+        return ESP_FAIL;
+    }
+    parse_entity_object(e, s_buf, NULL);
+    return ESP_OK;
+}
+
+/* ------------------------------------------------------------------------- */
+/* 动作                                                                       */
+/* ------------------------------------------------------------------------- */
+
+esp_err_t ha_client_action(const char *entity_id, const char *service)
+{
+    if (entity_id == NULL || service == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    char domain[24] = {0};
+    const char *dot = strchr(entity_id, '.');
+    size_t dlen = dot ? (size_t)(dot - entity_id) : 0;
+    if (dlen == 0 || dlen >= sizeof(domain)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    memcpy(domain, entity_id, dlen);
+
+    if (http_post_service(domain, service, entity_id) >= 300) {
+        return ESP_FAIL;
+    }
+
+    const ha_entity_t *e = ha_client_find(entity_id);
+    if (e) {
+        ha_entity_t *m = (ha_entity_t *)e;
+        if (strcmp(service, "toggle") == 0) {
+            m->on = !m->on;
+            str_copy(m->state, sizeof(m->state), m->on ? "on" : "off");
+        } else if (strcmp(service, "turn_on") == 0) {
+            m->on = true;
+            str_copy(m->state, sizeof(m->state), "on");
+        } else if (strcmp(service, "turn_off") == 0) {
+            m->on = false;
+            str_copy(m->state, sizeof(m->state), "off");
+        }
+    }
+    return ESP_OK;
+}
+
+/* ------------------------------------------------------------------------- */
+/* 兜底自动挑选                                                                */
+/* ------------------------------------------------------------------------- */
+
+static const char *const SENSOR_CLASSES[] = {
+    "temperature", "humidity", "illuminance", "battery", "power", "energy",
+    "voltage", "current", "co2", "pm25", "pm10", "pressure", "moisture", "gas",
+};
+static const char *const SENSOR_UNITS[] = {
+    "\u00b0C", "\u00b0F", "%", "lx", "W", "kWh", "V", "A", "Pa", "ppm", "hPa", "\u00b5g/m\u00b3",
+};
+
+typedef bool (*entity_filter_t)(const char *id, const char *obj_start, const char *obj_end);
+
+static bool looks_internal(const char *id, const char *obj_start, const char *obj_end)
+{
+    if (strstr(id, "backup") || strstr(id, "openvfd") || strstr(id, "uptime")) {
+        return true;
+    }
+    char name[64] = {0};
+    if (json_str_in(obj_start, obj_end, "friendly_name", name, sizeof(name))) {
+        if (strstr(name, "备份") || strstr(name, "OpenVFD")) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static const char *s_required_class = NULL;
+
+static bool sensor_filter(const char *id, const char *obj_start, const char *obj_end)
+{
+    if (looks_internal(id, obj_start, obj_end)) {
+        return false;
+    }
+    char cls[32] = {0};
+    const bool has_cls = json_str_in(obj_start, obj_end, "device_class", cls, sizeof(cls));
+    if (s_required_class != NULL) {
+        return has_cls && strcmp(cls, s_required_class) == 0;
+    }
+    if (has_cls) {
+        for (size_t i = 0; i < sizeof(SENSOR_CLASSES) / sizeof(SENSOR_CLASSES[0]); i++) {
+            if (strcmp(cls, SENSOR_CLASSES[i]) == 0) {
+                return true;
+            }
+        }
+    }
+    char unit[16] = {0};
+    if (json_str_in(obj_start, obj_end, "unit_of_measurement", unit, sizeof(unit))) {
+        for (size_t i = 0; i < sizeof(SENSOR_UNITS) / sizeof(SENSOR_UNITS[0]); i++) {
+            if (strcmp(unit, SENSOR_UNITS[i]) == 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static bool plain_filter(const char *id, const char *obj_start, const char *obj_end)
+{
+    return !looks_internal(id, obj_start, obj_end);
+}
+
+static int scan_register(const char *prefix, entity_filter_t filter, int max_add)
+{
+    int added = 0;
+    const char *p = s_buf;
+    const char *needle = "\"entity_id\":\"";
+    const size_t plen = strlen(prefix);
+
+    while ((p = strstr(p, needle)) != NULL) {
+        p += strlen(needle);
+        if (strncmp(p, prefix, plen) != 0) {
+            continue;
+        }
+
+        char id[96] = {0};
+        size_t n = 0;
+        while (*p && *p != '"' && n + 1 < sizeof(id)) {
+            id[n++] = *p++;
+        }
+        if (id[0] == '\0') {
+            break;
+        }
+
+        const char *obj_end = strstr(p, needle);
+        if (obj_end == NULL) {
+            obj_end = p + strlen(p);
+        }
+        if (filter && !filter(id, p, obj_end)) {
+            continue;
+        }
+        if (added >= max_add || s_count >= HA_MAX_ENTITIES) {
+            break;
+        }
+        char fn[48] = {0};
+        json_str_in(p, obj_end, "friendly_name", fn, sizeof(fn));
+        if (ha_client_register(id, fn[0] ? fn : NULL) == ESP_OK) {
+            added++;
+        }
+    }
+    return added;
+}
+
+esp_err_t ha_client_autofill(void)
+{
+    char url[APP_HA_URL_MAX + 32];
+    snprintf(url, sizeof(url), "%s/api/states", s_base);
+    if (http_get(url) != 200) {
+        return ESP_FAIL;
+    }
+
+    static const char *const control_prefix[] = {"light.", "fan.", "input_boolean.", "switch."};
+    for (size_t i = 0; i < sizeof(control_prefix) / sizeof(control_prefix[0]); i++) {
+        scan_register(control_prefix[i], plain_filter, 4);
+    }
+    scan_register("script.", plain_filter, 4);
+    scan_register("scene.", plain_filter, 4);
+
+    static const char *const sensor_order[] = {"temperature", "humidity", "illuminance",
+                                               "co2", "pm25", "pressure", "power"};
+    for (size_t i = 0; i < sizeof(sensor_order) / sizeof(sensor_order[0]); i++) {
+        s_required_class = sensor_order[i];
+        scan_register("sensor.", sensor_filter, 2);
+    }
+    s_required_class = NULL;
+    scan_register("sensor.", sensor_filter, 2);
+
+    ESP_LOGI(TAG, "autofill picked %d entities", s_count);
+    return s_count > 0 ? ESP_OK : ESP_ERR_NOT_FOUND;
+}
+
+/* ------------------------------------------------------------------------- */
+/* 轮询                                                                       */
+/* ------------------------------------------------------------------------- */
+
+static void poll_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    while (true) {
+        for (int i = 0; i < s_count; i++) {
+            ha_client_refresh_at(i);
+        }
+        vTaskDelay(pdMS_TO_TICKS(CONFIG_APP_POLL_INTERVAL_S * 1000));
+    }
+}
+
+void ha_client_start_poll(void)
+{
+    xTaskCreate(poll_task, "ha_poll", 6144, NULL, 4, NULL);
+}

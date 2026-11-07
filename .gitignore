@@ -1,0 +1,12 @@
+build/
+build_*/
+managed_components/
+dependencies.lock
+sdkconfig
+sdkconfig.old
+cmake-build-*/
+.vscode/.env
+main/secrets.h
+*.log
+jc3636_panel/app/__pycache__/
+*.pyc

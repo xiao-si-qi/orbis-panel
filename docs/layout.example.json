@@ -1,0 +1,33 @@
+{
+  "version": 3,
+  "title": "Home",
+  "pages": [
+    {
+      "name": "客厅",
+      "tiles": [
+        { "entity": "light.xuan_guan_kai_guan_xie_ju_deng_zhong_jian", "label": "鞋柜灯", "type": "toggle" },
+        { "entity": "light.xi_ding_deng_kai_guan_kai_guan", "label": "客卫洗漱区灯", "type": "toggle" },
+        { "entity": "switch.ru_hu_shui_biao_ru_hu_shui_biao_valve", "label": "水表阀门", "type": "toggle" },
+        { "entity": "sensor.esp32_water_meter_wm_001_temperature", "label": "水温", "type": "sensor" }
+      ]
+    },
+    {
+      "name": "场景",
+      "tiles": [
+        { "entity": "script.camera_ptz_up_start", "label": "摄像头往上", "type": "scene" },
+        { "entity": "script.camera_ptz_down_start", "label": "摄像头往下", "type": "scene" },
+        { "entity": "script.camera_ptz_left_start", "label": "摄像头向左", "type": "scene" },
+        { "entity": "script.camera_ptz_right_start", "label": "摄像头往右", "type": "scene" }
+      ]
+    },
+    {
+      "name": "环境",
+      "tiles": [
+        { "entity": "sensor.esp32_water_meter_wm_001_temperature", "label": "水表温度", "type": "sensor" },
+        { "entity": "sensor.esp32_water_meter_wm_001_humidity", "label": "水表湿度", "type": "sensor" },
+        { "entity": "sensor.zong_gong_lu", "label": "总功率", "type": "sensor" },
+        { "entity": "sensor.24e8ced3c476_indoortemperature", "label": "室内温度", "type": "sensor" }
+      ]
+    }
+  ]
+}

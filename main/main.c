@@ -1,0 +1,96 @@
+/*
+ * JC3636W518 · Home Assistant 家庭控制屏
+ *
+ * 启动顺序：
+ *   1. NVS / 配置
+ *   2. 屏幕 + 触摸 + LVGL（先出启动页，避免网络阻塞时黑屏）
+ *   3. 后台任务：连 Wi-Fi → 拉 JSON 布局 → 注册实体 → 一次全量拉状态 → 建界面
+ *      （没有 JSON 布局时退回自动挑选 灯/场景/传感器）
+ *   4. 后台轮询实体状态
+ */
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_log.h"
+#include "esp_lcd_panel_ops.h"
+
+#include "app_settings.h"
+#include "bsp_display.h"
+#include "bsp_lvgl.h"
+#include "bsp_touch.h"
+#include "ha_client.h"
+#include "layout.h"
+#include "ui_home.h"
+#include "wifi_manager.h"
+
+static const char *TAG = "app";
+
+static void register_layout_entities(const layout_t *layout)
+{
+    for (int p = 0; p < layout->page_count; p++) {
+        for (int t = 0; t < layout->pages[p].tile_count; t++) {
+            const layout_tile_t *tile = &layout->pages[p].tiles[t];
+            ha_client_register(tile->entity, tile->label[0] ? tile->label : NULL);
+        }
+    }
+    ESP_LOGI(TAG, "registered %d entity(ies) from layout", ha_client_count());
+}
+
+static void network_task(void *arg)
+{
+    (void)arg;
+
+    ESP_ERROR_CHECK(wifi_manager_init());
+    wifi_manager_start();
+
+    if (!wifi_manager_wait_connected(30000)) {
+        ESP_LOGW(TAG, "Wi-Fi not connected yet, starting provisioning AP as a fallback");
+        wifi_manager_start_provisioning();
+        while (!wifi_manager_is_connected()) {
+            vTaskDelay(pdMS_TO_TICKS(2000));
+        }
+    }
+    ESP_LOGI(TAG, "Wi-Fi connected, rssi=%d dBm", wifi_manager_get_rssi());
+
+    if (ha_client_init() != ESP_OK) {
+        ESP_LOGE(TAG, "HA client init failed (check provisioning page)");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    layout_t layout;
+    if (layout_fetch(&layout) == ESP_OK) {
+        register_layout_entities(&layout);
+        ha_client_fetch_all();
+        ui_home_apply(&layout);
+        ESP_LOGI(TAG, "layout applied from HA");
+    } else if (ha_client_autofill() == ESP_OK) {
+        layout_fallback(&layout);
+        ha_client_fetch_all();
+        ui_home_apply(&layout);
+        ESP_LOGI(TAG, "fallback layout applied (%d page(s))", layout.page_count);
+    } else {
+        ESP_LOGE(TAG, "no layout and no entities found");
+    }
+
+    ha_client_start_poll();
+    ESP_LOGI(TAG, "polling %d entity(ies)", ha_client_count());
+    vTaskDelete(NULL);
+}
+
+void app_main(void)
+{
+    ESP_LOGI(TAG, "JC3636W518 HA control panel booting");
+
+    ESP_ERROR_CHECK(app_settings_init());
+
+    esp_lcd_panel_handle_t panel = NULL;
+    ESP_ERROR_CHECK(bsp_display_init(&panel, NULL, NULL));
+    ESP_ERROR_CHECK(bsp_touch_init());
+    ESP_ERROR_CHECK(bsp_lvgl_init(panel));
+
+    ui_home_boot();
+    bsp_lvgl_start();
+
+    xTaskCreate(network_task, "net", 8192, NULL, 4, NULL);
+}

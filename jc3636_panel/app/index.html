@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JC3636 控制屏 · 布局编辑</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         background: #0f1115; color: #e8e8ea; }
+  header { display: flex; gap: 12px; align-items: center; padding: 12px 16px;
+           border-bottom: 1px solid #23262d; position: sticky; top: 0; background: #0f1115; z-index: 5; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header .spacer { flex: 1; }
+  button { background: #2a2f3a; color: #e8e8ea; border: 1px solid #363c48; border-radius: 8px;
+           padding: 7px 12px; font-size: 13px; cursor: pointer; }
+  button:hover { background: #343b48; }
+  button.primary { background: #2563eb; border-color: #2563eb; }
+  button.primary:hover { background: #1d4ed8; }
+  button.danger { background: transparent; border-color: #7f1d1d; color: #fca5a5; padding: 2px 8px; }
+  main { display: grid; grid-template-columns: 1fr 320px; gap: 16px; padding: 16px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background: #151821; border: 1px solid #23262d; border-radius: 12px; padding: 14px; }
+  .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .tab { padding: 6px 12px; border-radius: 999px; background: #1d212b; border: 1px solid #2b303b;
+         cursor: pointer; font-size: 13px; }
+  .tab.active { background: #2563eb; border-color: #2563eb; }
+  .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .tile { background: #1b202a; border: 1px solid #2b303b; border-radius: 12px; padding: 10px; min-height: 74px;
+          display: flex; flex-direction: column; justify-content: space-between; }
+  .tile .row { display: flex; justify-content: space-between; align-items: start; gap: 6px; }
+  .tile .label { font-size: 14px; font-weight: 600; }
+  .tile .entity { font-size: 11px; color: #8b93a1; word-break: break-all; margin-top: 2px; }
+  .tile .type { font-size: 11px; color: #6b7280; margin-top: 6px; }
+  .tile.empty { border-style: dashed; color: #4b5563; align-items: center; justify-content: center; font-size: 12px; }
+  .hint { font-size: 12px; color: #8b93a1; margin: 10px 0 0; line-height: 1.5; }
+  input[type=search], input[type=text] { width: 100%; padding: 8px 10px; border-radius: 8px;
+         border: 1px solid #2b303b; background: #0f1115; color: #e8e8ea; font-size: 13px; }
+  .entity-list { max-height: 420px; overflow: auto; margin-top: 10px; }
+  .entity { padding: 7px 9px; border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; }
+  .entity:hover { background: #1d212b; }
+  .entity .n { font-size: 13px; }
+  .entity .i { font-size: 11px; color: #6b7280; }
+  .entity .s { font-size: 11px; color: #10b981; }
+  textarea { width: 100%; min-height: 260px; background: #0b0d12; color: #cbd5e1; border: 1px solid #2b303b;
+             border-radius: 10px; padding: 10px; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  .status { font-size: 12px; color: #8b93a1; }
+  .status.ok { color: #34d399; }
+  .status.err { color: #f87171; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>JC3636 控制屏 · 布局</h1>
+  <span class="status" id="status">加载中…</span>
+  <div class="spacer"></div>
+  <button id="btn-json">查看 / 编辑 JSON</button>
+  <button id="btn-reload">重新读取</button>
+  <button class="primary" id="btn-save">保存并发布</button>
+</header>
+
+<main>
+  <section class="panel">
+    <div class="tabs" id="tabs"></div>
+    <div class="tiles" id="tiles"></div>
+    <p class="hint">
+      每页最多 4 个卡片（2×2）。点右侧实体列表里的条目会加到当前页；发布后屏幕在下次开机时生效
+      （目前没有热重载）。type: <code>toggle</code> 开关、<code>scene</code> 场景、<code>sensor</code> 只读。
+    </p>
+    <div id="json-box" class="hidden" style="margin-top:14px">
+      <textarea id="json-text" spellcheck="false"></textarea>
+      <p class="hint">可直接编辑 JSON 后点“应用到编辑器”，再点“保存并发布”。</p>
+      <button id="btn-json-apply">应用到编辑器</button>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <input type="search" id="q" placeholder="搜索实体：灯 / 温度 / script …">
+    <div class="entity-list" id="entities"></div>
+  </aside>
+</main>
+
+<script>
+let layout = { title: "Home", pages: [{ name: "Devices", tiles: [] }] };
+let page = 0;
+
+const $ = (id) => document.getElementById(id);
+const statusEl = $("status");
+
+function setStatus(text, kind) {
+  statusEl.textContent = text;
+  statusEl.className = "status" + (kind ? " " + kind : "");
+}
+
+function typeOf(entity) {
+  if (entity.startsWith("sensor.") || entity.startsWith("binary_sensor.")) return "sensor";
+  if (entity.startsWith("script.") || entity.startsWith("scene.") || entity.startsWith("automation.")) return "scene";
+  return "toggle";
+}
+
+async function load() {
+  setStatus("读取中…");
+  const resp = await fetch("api/layout");
+  const data = await resp.json();
+  if (!data.ok) { setStatus("读取失败: " + data.error, "err"); return; }
+  layout = data.layout || layout;
+  if (!layout.pages || !layout.pages.length) layout.pages = [{ name: "Devices", tiles: [] }];
+  page = 0;
+  render();
+  setStatus("已读取 " + (data.layout_path || ""), "ok");
+}
+
+function render() {
+  const tabs = $("tabs");
+  tabs.innerHTML = "";
+  layout.pages.forEach((p, i) => {
+    const el = document.createElement("div");
+    el.className = "tab" + (i === page ? " active" : "");
+    el.textContent = p.name;
+    el.onclick = () => { page = i; render(); };
+    el.ondblclick = () => {
+      const name = prompt("页面名称", p.name);
+      if (name) { p.name = name; render(); }
+    };
+    tabs.appendChild(el);
+  });
+  const add = document.createElement("div");
+  add.className = "tab";
+  add.textContent = "+ 新页";
+  add.onclick = () => {
+    if (layout.pages.length >= 6) { alert("最多 6 页"); return; }
+    layout.pages.push({ name: "Page " + (layout.pages.length + 1), tiles: [] });
+    page = layout.pages.length - 1;
+    render();
+  };
+  tabs.appendChild(add);
+
+  const tiles = $("tiles");
+  tiles.innerHTML = "";
+  const cur = layout.pages[page];
+  for (let i = 0; i < 4; i++) {
+    const tile = cur.tiles[i];
+    const el = document.createElement("div");
+    if (!tile) {
+      el.className = "tile empty";
+      el.textContent = "空位";
+      tiles.appendChild(el);
+      continue;
+    }
+    el.className = "tile";
+    el.innerHTML = `<div class="row"><div><div class="label"></div><div class="entity"></div></div>
+                    <button class="danger">删除</button></div><div class="type"></div>`;
+    el.querySelector(".label").textContent = tile.label || tile.entity;
+    el.querySelector(".entity").textContent = tile.entity;
+    el.querySelector(".type").textContent = tile.type || typeOf(tile.entity);
+    el.querySelector("button").onclick = () => { cur.tiles.splice(i, 1); render(); };
+    el.onclick = (ev) => {
+      if (ev.target.tagName === "BUTTON") return;
+      const label = prompt("卡片标题（留空用 HA 的 friendly_name）", tile.label || "");
+      if (label === null) return;
+      tile.label = label;
+      render();
+    };
+    tiles.appendChild(el);
+  }
+}
+
+async function search() {
+  const q = $("q").value.trim();
+  const list = $("entities");
+  list.innerHTML = "<div class='entity'><span class='i'>搜索中…</span></div>";
+  const resp = await fetch("api/entities?q=" + encodeURIComponent(q));
+  const data = await resp.json();
+  if (!data.ok) {
+    list.innerHTML = "";
+    const d = document.createElement("div");
+    d.className = "entity";
+    d.textContent = "读取实体失败: " + data.error;
+    list.appendChild(d);
+    return;
+  }
+  list.innerHTML = "";
+  (data.entities || []).slice(0, 200).forEach((e) => {
+    const el = document.createElement("div");
+    el.className = "entity";
+    el.innerHTML = "<span class='n'></span><span class='i'></span><span class='s'></span>";
+    el.querySelector(".n").textContent = e.name;
+    el.querySelector(".i").textContent = e.entity_id;
+    el.querySelector(".s").textContent = e.state + (e.unit ? " " + e.unit : "");
+    el.onclick = () => {
+      const cur = layout.pages[page];
+      if (cur.tiles.length >= 4) { alert("这页已经满了（4 个）"); return; }
+      cur.tiles.push({ entity: e.entity_id, label: e.name, type: typeOf(e.entity_id) });
+      render();
+    };
+    list.appendChild(el);
+  });
+}
+
+function toggleJson(show) {
+  const box = $("json-box");
+  const visible = show === undefined ? box.classList.contains("hidden") : show;
+  if (visible) {
+    $("json-text").value = JSON.stringify(layout, null, 2);
+    box.classList.remove("hidden");
+  } else {
+    box.classList.add("hidden");
+  }
+}
+
+$("btn-json").onclick = () => toggleJson();
+$("btn-json-apply").onclick = () => {
+  try {
+    layout = JSON.parse($("json-text").value);
+    page = 0;
+    render();
+    setStatus("已应用 JSON 到编辑器（还没发布）", "ok");
+  } catch (e) {
+    setStatus("JSON 解析失败: " + e.message, "err");
+  }
+};
+$("btn-reload").onclick = load;
+$("btn-save").onclick = async () => {
+  setStatus("发布中…");
+  const resp = await fetch("api/layout", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(layout),
+  });
+  const data = await resp.json();
+  if (data.ok) {
+    setStatus("已发布 v" + data.version + " → " + data.layout_path + "（屏幕重启后生效）", "ok");
+  } else {
+    setStatus("发布失败: " + data.error, "err");
+  }
+};
+
+let timer = null;
+$("q").addEventListener("input", () => {
+  clearTimeout(timer);
+  timer = setTimeout(search, 300);
+});
+
+load().then(() => search());
+</script>
+</body>
+</html>
