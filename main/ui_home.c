@@ -89,12 +89,14 @@ static bool s_press_on_slider;   /* 本次按压是否落在滑条上 */
 /* ---- 灯 / 传感器 的子页面 ---- */
 static lv_obj_t *s_detail;                       /* 全屏子页容器 */
 static lv_obj_t *s_detail_title;
-static lv_obj_t *s_detail_power_btn;
+static lv_obj_t *s_detail_power_sw;
 static lv_obj_t *s_detail_br_row, *s_detail_br_slider, *s_detail_br_value;
 static lv_obj_t *s_detail_ct_row, *s_detail_ct_slider, *s_detail_ct_value;
 static bool s_detail_visible;
 static char s_detail_entity[96];
 /* 用户刚拖过滑条时，短时间内以本地值为准（HA 的轮询会慢半拍，灯关着时甚至没有 brightness） */
+static bool s_sw_override_on;
+static uint32_t s_sw_override_until;
 static int s_br_override;
 static uint32_t s_br_override_until;
 static int s_ct_override;
@@ -791,8 +793,26 @@ static void detail_apply_entity(void)
     lv_label_set_text(s_detail_title, e->name);
 
     /* 不再显示"已开/已关"文字：开=白色底、关=黑色底，一眼可辨 */
-    lv_obj_set_style_bg_color(s_detail_power_btn, e->on ? lv_color_white() : lv_color_hex(0x151517), 0);
-    power_icon_color(e->on);
+    bool on = e->on;
+    if (s_sw_override_until > lv_tick_get()) {
+        on = s_sw_override_on;
+        if (e->on == on) {
+            s_sw_override_until = 0;          /* HA 已跟上，交还控制权 */
+        }
+    } else {
+        s_sw_override_until = 0;
+    }
+    if (s_detail_power_sw != NULL) {
+        if (on) {
+            lv_obj_add_state(s_detail_power_sw, LV_STATE_CHECKED);
+        } else {
+            lv_obj_remove_state(s_detail_power_sw, LV_STATE_CHECKED);
+        }
+        lv_obj_set_style_bg_color(s_detail_power_sw,
+                                  on ? lv_color_white() : lv_color_hex(0x151517), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(s_detail_power_sw,
+                                  on ? lv_color_black() : lv_color_white(), LV_PART_KNOB);
+    }
     detail_update_ambience();
 
     if (s_detail_br_row) {
@@ -878,24 +898,22 @@ static void detail_slider_changed_cb(lv_event_t *e)
     xQueueSend(s_cmd_q, &cmd, 0);
 }
 
-static void detail_power_cb(lv_event_t *e)
+static void detail_power_changed_cb(lv_event_t *e)
 {
-    (void)e;
+    lv_obj_t *sw = lv_event_get_target(e);
+    const bool want_on = lv_obj_has_state(sw, LV_STATE_CHECKED);
+
+    /* 开关自身的视觉已经切换：记住它，别让轮询立刻拉回去 */
+    s_sw_override_on = want_on;
+    s_sw_override_until = lv_tick_get() + OVERRIDE_MS;
+
     if (s_detail_entity[0] == '\0' || s_cmd_q == NULL) {
         return;
     }
-    const ha_entity_t *ent = ha_client_find(s_detail_entity);
-    const bool now_on = (ent != NULL) && ent->on;
-
-    /* 乐观更新：先翻转界面，立刻有反馈；真正结果稍后由轮询校正 */
-    lv_obj_set_style_bg_color(s_detail_power_btn, now_on ? lv_color_hex(0x151517) : lv_color_white(), 0);
-    power_icon_color(!now_on);
-    detail_update_ambience();
-
     cmd_t cmd;
     memset(&cmd, 0, sizeof(cmd));
     snprintf(cmd.entity, sizeof(cmd.entity), "%s", s_detail_entity);
-    snprintf(cmd.service, sizeof(cmd.service), "toggle");
+    snprintf(cmd.service, sizeof(cmd.service), "%s", want_on ? "turn_on" : "turn_off");
     xQueueSend(s_cmd_q, &cmd, 0);
 }
 
@@ -932,15 +950,17 @@ static void build_detail_view(lv_obj_t *scr)
     lv_obj_set_style_text_color(s_detail_title, COLOR_TEXT, 0);
     lv_obj_align(s_detail_title, LV_ALIGN_TOP_MID, 0, 66);
 
-    /* 开关按钮 */
-    s_detail_power_btn = lv_button_create(s_detail);
-    lv_obj_set_size(s_detail_power_btn, 160, 52);
-    lv_obj_align(s_detail_power_btn, LV_ALIGN_TOP_MID, 0, 128);
-    lv_obj_set_style_radius(s_detail_power_btn, 18, 0);
-    lv_obj_set_style_bg_color(s_detail_power_btn, COLOR_ACCENT, 0);
-    lv_obj_set_style_pad_all(s_detail_power_btn, 0, 0);
-    lv_obj_add_event_cb(s_detail_power_btn, detail_power_cb, LV_EVENT_CLICKED, NULL);
-    power_icon_draw(s_detail_power_btn);
+    /* 开关：lv_switch（开=白色轨道+黑滑块，关=深色轨道+白滑块） */
+    s_detail_power_sw = lv_switch_create(s_detail);
+    lv_obj_set_size(s_detail_power_sw, 96, 46);
+    lv_obj_align(s_detail_power_sw, LV_ALIGN_TOP_MID, 0, 128);
+    lv_obj_set_style_radius(s_detail_power_sw, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_detail_power_sw, lv_color_hex(0x151517), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_detail_power_sw, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_detail_power_sw, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(s_detail_power_sw, lv_color_hex(0x3A3A3C), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_detail_power_sw, lv_color_white(), LV_PART_KNOB);
+    lv_obj_add_event_cb(s_detail_power_sw, detail_power_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     /* 亮度 */
     s_detail_br_row = lv_obj_create(s_detail);
