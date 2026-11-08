@@ -49,6 +49,18 @@ esp_err_t ha_client_action(const char *entity_id, const char *service);
 /** 带参数的动作用：attrs_json 是额外字段（不含 entity_id），例如 {"brightness_pct":60}。 */
 esp_err_t ha_client_action_attrs(const char *entity_id, const char *service, const char *attrs_json);
 
+/**
+ * @brief 拉某个实体最近 hours 小时的历史，降采样到 max_points 个点。
+ *
+ * @param values     输出数组（float，长度至少 max_points）
+ * @param out_count  实际点数
+ * @param out_min    最小值
+ * @param out_max    最大值
+ * @param out_avg    平均值
+ */
+esp_err_t ha_client_history(const char *entity_id, int hours, float *values, int max_points,
+                            int *out_count, float *out_min, float *out_max, float *out_avg);
+
 /** HA REST 是否可达（最近一次请求成功）。界面上的 HA 圆点用它。 */
 bool ha_client_online(void);
 

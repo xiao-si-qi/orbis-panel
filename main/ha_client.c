@@ -8,6 +8,9 @@
  */
 
 #include <string.h>
+#include <time.h>
+#include <stdlib.h>
+#include <stdio.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -21,6 +24,7 @@
 #include "esp_log.h"
 #include "sdkconfig.h"
 
+#include "cJSON.h"
 #include "app_settings.h"
 #include "ha_client.h"
 
@@ -45,8 +49,23 @@ static int s_count;
 /* HTTP                                                                       */
 /* ------------------------------------------------------------------------- */
 
+/* 历史请求临时把响应写到 PSRAM 大缓冲里（复用同一条 TLS 连接，避免再开一条） */
+static char *s_sink;
+static size_t s_sink_len;
+static size_t s_sink_cap;
+
 static esp_err_t http_event_handler(esp_http_client_event_t *ev)
 {
+    if (ev->event_id == HTTP_EVENT_ON_DATA && s_sink != NULL && ev->data_len > 0) {
+        const size_t n = (size_t)ev->data_len;
+        if (s_sink_len + n < s_sink_cap) {
+            memcpy(s_sink + s_sink_len, ev->data, n);
+            s_sink_len += n;
+            s_sink[s_sink_len] = '\0';
+        }
+        return ESP_OK;
+    }
+
     if (ev->event_id == HTTP_EVENT_ON_DATA && ev->data && ev->data_len > 0) {
         size_t room = HA_BODY_MAX - 1 - s_buf_len;
         size_t n = (size_t)ev->data_len < room ? (size_t)ev->data_len : room;
@@ -490,6 +509,148 @@ esp_err_t ha_client_action(const char *entity_id, const char *service)
 /* ------------------------------------------------------------------------- */
 /* 轮询                                                                       */
 /* ------------------------------------------------------------------------- */
+
+/* ---------------- 历史数据（折线图） ---------------- */
+
+#define HIST_MAX_BYTES   (32 * 1024)
+
+typedef struct {
+    char *buf;
+    size_t len;
+    size_t cap;
+} hist_ctx_t;
+
+static esp_err_t hist_event(esp_http_client_event_t *ev)
+{
+    hist_ctx_t *ctx = (hist_ctx_t *)ev->user_data;
+    if (ev->event_id == HTTP_EVENT_ON_DATA && ctx != NULL && ev->data_len > 0) {
+        const size_t n = (size_t)ev->data_len;
+        if (ctx->len + n < ctx->cap) {
+            memcpy(ctx->buf + ctx->len, ev->data, n);
+            ctx->len += n;
+            ctx->buf[ctx->len] = '\0';
+        }
+    }
+    return ESP_OK;
+}
+
+esp_err_t ha_client_history(const char *entity_id, int hours, float *values, int max_points,
+                            int *out_count, float *out_min, float *out_max, float *out_avg)
+{
+    if (entity_id == NULL || values == NULL || max_points <= 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (s_base[0] == '\0') {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    char *buf = heap_caps_malloc(HIST_MAX_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (buf == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    buf[0] = '\0';
+
+    const time_t now = time(NULL);
+    const time_t start = now - (time_t)hours * 3600;
+    struct tm tm_start;
+    gmtime_r(&start, &tm_start);
+    char iso[40];
+    snprintf(iso, sizeof(iso), "%04d-%02d-%02dT%02d:%02d:%02dZ",
+             tm_start.tm_year + 1900, tm_start.tm_mon + 1, tm_start.tm_mday,
+             tm_start.tm_hour, tm_start.tm_min, tm_start.tm_sec);
+
+    char url[APP_HA_URL_MAX + 320];
+    snprintf(url, sizeof(url),
+             "%s/api/history/period/%s?filter_entity_id=%.95s&minimal_response&no_attributes"
+             "&significant_changes_only",
+             s_base, iso, entity_id);
+
+    /* 复用常驻客户端（同一条 TLS 连接），只把响应写进 PSRAM 大缓冲：
+       再开一条 TLS 会多占 16KB 内部 RAM，之前就是这里失败的 */
+    if (client_create() != ESP_OK) {
+        free(buf);
+        return ESP_FAIL;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    set_auth_header();
+    esp_http_client_set_method(s_client, HTTP_METHOD_GET);
+    esp_http_client_set_url(s_client, url);
+    s_sink = buf;
+    s_sink_len = 0;
+    s_sink_cap = HIST_MAX_BYTES - 1;
+    buf[0] = '\0';
+    esp_err_t herr = esp_http_client_perform(s_client);
+    int hstatus = esp_http_client_get_status_code(s_client);
+    s_sink = NULL;
+    xSemaphoreGive(s_lock);
+
+    if (herr != ESP_OK || hstatus != 200) {
+        ESP_LOGW(TAG, "history %s -> %s, HTTP %d", entity_id, esp_err_to_name(herr), hstatus);
+        if (herr != ESP_OK) {
+            esp_http_client_close(s_client);
+        }
+        free(buf);
+        return ESP_FAIL;
+    }
+
+    /* 不解析成对象树：直接在文本里扫 "state":"..."，避免 cJSON 把内部 RAM 撑爆 */
+    float *raw = heap_caps_malloc(sizeof(float) * 1024, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (raw == NULL) {
+        free(buf);
+        return ESP_ERR_NO_MEM;
+    }
+    int raw_n = 0;
+    const char *p = buf;
+    while (raw_n < 1024) {
+        p = strstr(p, "\"state\":\"");
+        if (p == NULL) {
+            break;
+        }
+        p += strlen("\"state\":\"");
+        char *endp = NULL;
+        const double v = strtod(p, &endp);
+        const char *quote = strchr(p, '"');
+        if (endp != p && quote != NULL && endp <= quote) {
+            raw[raw_n++] = (float)v;      /* 只收数字型状态，unknown/on/off 自动跳过 */
+        }
+        p = quote ? quote : p;
+    }
+
+    int out_n = 0;
+    float vmin = 0, vmax = 0, vsum = 0;
+    if (raw_n > 0) {
+        const int buckets = (raw_n < max_points) ? raw_n : max_points;
+        for (int b = 0; b < buckets; b++) {
+            const int from = (int)((long)b * raw_n / buckets);
+            const int to = (int)((long)(b + 1) * raw_n / buckets);
+            float acc = 0;
+            int cnt = 0;
+            for (int i = from; i < to; i++) {
+                acc += raw[i];
+                cnt++;
+            }
+            if (cnt == 0) {
+                continue;
+            }
+            const float avg = acc / cnt;
+            values[out_n++] = avg;
+            vsum += avg;
+            if (out_n == 1 || avg < vmin) vmin = avg;
+            if (out_n == 1 || avg > vmax) vmax = avg;
+        }
+    }
+    free(raw);
+    free(buf);
+
+    *out_count = out_n;
+    if (out_n > 0) {
+        *out_min = vmin;
+        *out_max = vmax;
+        *out_avg = vsum / out_n;
+    }
+    ESP_LOGI(TAG, "history %s: %d 点 (原始 %d)", entity_id, out_n, raw_n);
+    return out_n > 0 ? ESP_OK : ESP_FAIL;
+}
 
 bool ha_client_online(void)
 {

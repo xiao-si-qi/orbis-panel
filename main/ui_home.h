@@ -21,6 +21,16 @@ void ui_home_close_detail(void);
 /** 子页面是否打开（滑动翻页要避让）。 */
 bool ui_home_detail_open(void);
 
+/** 显示传感器折线图（由后台任务取完历史后调用，必须在 LVGL 线程）。 */
+void ui_home_show_chart(const char *entity_id, const float *vals, int n,
+                        float vmin, float vmax, float vavg);
+
+/** 关闭折线图。 */
+void ui_home_close_chart(void);
+
+/** 折线图是否打开。 */
+bool ui_home_chart_open(void);
+
 #ifdef __cplusplus
 }
 #endif

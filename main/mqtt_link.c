@@ -208,6 +208,25 @@ static void handle_cmd(const char *payload)
 
     ESP_LOGI(TAG, "cmd '%s' seq=%u", cmd, seq);
 
+    if (strcmp(cmd, "hist") == 0) {
+        /* 调试：{cmd:"hist", entity:"sensor.x"} 拉 6 小时历史并打印统计 */
+        const cJSON *je = cJSON_GetObjectItemCaseSensitive(root, "entity");
+        if (cJSON_IsString(je)) {
+            static float vals[64];
+            int cnt = 0;
+            float vmin = 0, vmax = 0, vavg = 0;
+            esp_err_t e = ha_client_history(je->valuestring, 6, vals, 64, &cnt, &vmin, &vmax, &vavg);
+            ESP_LOGI(TAG, "hist %s -> %s, %d 点 min=%.2f max=%.2f avg=%.2f",
+                     je->valuestring, esp_err_to_name(e), cnt, vmin, vmax, vavg);
+            if (e == ESP_OK && cnt > 0) {
+                lv_lock();
+                ui_home_show_chart(je->valuestring, vals, cnt, vmin, vmax, vavg);
+                lv_unlock();
+            }
+        }
+        cJSON_Delete(root);
+        return;
+    }
     if (strcmp(cmd, "detail") == 0) {
         /* 调试：{cmd:"detail", entity:"light.xxx"} 直接打开子页 */
         const cJSON *jentity = cJSON_GetObjectItemCaseSensitive(root, "entity");

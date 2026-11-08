@@ -6,6 +6,7 @@
  * 以及「检查更新」按钮（拉 HA 上的 firmware.json，有新版本就下载并重启）。
  */
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -96,6 +97,19 @@ static lv_obj_t *s_detail_power_sw;
 static lv_obj_t *s_detail_br_row, *s_detail_br_slider, *s_detail_br_value;
 static lv_obj_t *s_detail_ct_row, *s_detail_ct_slider, *s_detail_ct_value;
 static bool s_detail_visible;
+
+/* ---- 传感器折线图页 ---- */
+static lv_obj_t *s_chart_page;
+static lv_obj_t *s_chart_title;
+static lv_obj_t *s_chart_span;
+static lv_obj_t *s_chart;
+static lv_chart_series_t *s_chart_ser;
+static lv_obj_t *s_chart_min;
+static lv_obj_t *s_chart_max;
+static lv_obj_t *s_chart_avg;
+static lv_obj_t *s_chart_back_label;
+static bool s_chart_visible;
+static char s_chart_entity[96];
 static char s_detail_entity[96];
 /* 用户刚拖过滑条时，短时间内以本地值为准（HA 的轮询会慢半拍，灯关着时甚至没有 brightness） */
 static bool s_sw_override_on;
@@ -331,6 +345,12 @@ static void swipe_cb(lv_event_t *e)
     if (abs(dx) < 40 || abs(dx) < abs(dy)) {
         return;
     }
+    if (ui_home_chart_open()) {
+        if (dx > 40 && start.x < 70) {
+            ui_home_close_chart();
+        }
+        return;
+    }
     if (ui_home_detail_open()) {
         /* 只有从屏幕左边缘起手的右滑才当"返回"，否则拖滑条会被误判 */
         if (dx > 40 && start.x < 70) {
@@ -391,6 +411,22 @@ static void tile_clicked_cb(lv_event_t *e)
     }
     ESP_LOGI(TAG, "tile 点击: %s type=%d (detail=%p)", w->entity, (int)w->type, (void *)s_detail);
 
+    /* 传感器：点开折线图（历史数据由后台任务拉取） */
+    if (w->type == TILE_SENSOR) {
+        cmd_t cmd;
+        memset(&cmd, 0, sizeof(cmd));
+        snprintf(cmd.entity, sizeof(cmd.entity), "%s", w->entity);
+        snprintf(cmd.service, sizeof(cmd.service), "chart");
+        xQueueSend(s_cmd_q, &cmd, 0);
+        ESP_LOGI(TAG, "请求折线图: %s", w->entity);
+        if (s_chart_page != NULL && !s_chart_visible) {
+            lv_label_set_text(s_chart_title, "加载中…");
+            s_chart_visible = true;
+            lv_obj_remove_flag(s_chart_page, LV_OBJ_FLAG_HIDDEN);
+        }
+        return;
+    }
+
     /* 灯：点开详情页（亮度/色温）；其它实体保持直接动作 */
     if (strncmp(w->entity, "light.", 6) == 0) {
         ui_home_open_detail(w->entity);
@@ -425,10 +461,8 @@ static void make_tile(lv_obj_t *parent, int page, int slot, int col, int row)
     lv_obj_set_style_pad_all(card, 12, 0);
     lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
-    if (lt->type != TILE_SENSOR) {
-        lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_event_cb(card, tile_clicked_cb, LV_EVENT_CLICKED, w);
-    }
+    lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(card, tile_clicked_cb, LV_EVENT_CLICKED, w);
 
     lv_obj_t *label = lv_label_create(card);
     lv_label_set_text(label, lt->label[0] ? lt->label : lt->entity);
@@ -687,6 +721,21 @@ static void worker_task(void *arg)
     while (true) {
         cmd_t cmd;
         if (xQueueReceive(s_cmd_q, &cmd, portMAX_DELAY) == pdTRUE) {
+            if (strcmp(cmd.service, "chart") == 0) {
+                static float vals[32];
+                int n = 0;
+                float vmin = 0, vmax = 0, vavg = 0;
+                esp_err_t he = ha_client_history(cmd.entity, 6, vals, 32, &n, &vmin, &vmax, &vavg);
+                if (he == ESP_OK && n > 0) {
+                    lv_lock();
+                    ui_home_show_chart(cmd.entity, vals, n, vmin, vmax, vavg);
+                    lv_unlock();
+                } else {
+                    ESP_LOGW(TAG, "折线图无数据: %s", cmd.entity);
+                }
+                continue;
+            }
+
             ESP_LOGI(TAG, "%s %s %s", cmd.service, cmd.entity, cmd.attrs);
             if (cmd.attrs[0] != '\0') {
                 ha_client_action_attrs(cmd.entity, cmd.service, cmd.attrs);
@@ -1152,6 +1201,151 @@ bool ui_home_detail_open(void)
     return s_detail_visible;
 }
 
+/* ---------------- 传感器折线图 ---------------- */
+
+static void chart_back_cb(lv_event_t *e)
+{
+    (void)e;
+    ui_home_close_chart();
+}
+
+static void build_chart_view(lv_obj_t *scr)
+{
+    s_chart_page = lv_obj_create(scr);
+    lv_obj_remove_style_all(s_chart_page);
+    lv_obj_set_size(s_chart_page, 360, 360);
+    lv_obj_set_pos(s_chart_page, 0, 0);
+    lv_obj_set_style_bg_color(s_chart_page, lv_color_hex(0x0B0B0D), 0);
+    lv_obj_set_style_bg_opa(s_chart_page, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(s_chart_page, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_chart_page, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t *back = lv_button_create(s_chart_page);
+    lv_obj_set_size(back, 36, 36);
+    lv_obj_align(back, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_set_style_bg_opa(back, LV_OPA_20, 0);
+    lv_obj_set_style_radius(back, LV_RADIUS_CIRCLE, 0);
+    lv_obj_add_event_cb(back, chart_back_cb, LV_EVENT_CLICKED, NULL);
+    s_chart_back_label = lv_label_create(back);
+    lv_label_set_text(s_chart_back_label, LV_SYMBOL_LEFT);
+    lv_obj_center(s_chart_back_label);
+
+    s_chart_title = lv_label_create(s_chart_page);
+    lv_label_set_text(s_chart_title, "--");
+    lv_obj_set_style_text_font(s_chart_title, &lv_font_noto_18_cjk, 0);
+    lv_obj_set_style_text_color(s_chart_title, COLOR_TEXT, 0);
+    lv_obj_align(s_chart_title, LV_ALIGN_TOP_MID, 0, 58);
+
+    s_chart_span = lv_label_create(s_chart_page);
+    lv_label_set_text(s_chart_span, "近 3 小时");
+    lv_obj_set_style_text_font(s_chart_span, &lv_font_noto_18_cjk, 0);
+    lv_obj_set_style_text_color(s_chart_span, COLOR_MUTED, 0);
+    lv_obj_align(s_chart_span, LV_ALIGN_TOP_MID, 0, 76);
+
+    s_chart = lv_chart_create(s_chart_page);
+    lv_obj_set_size(s_chart, 288, 160);
+    lv_obj_align(s_chart, LV_ALIGN_TOP_MID, 0, 96);
+    lv_obj_set_style_bg_opa(s_chart, LV_OPA_TRANSP, 0);      /* 无底色、无边框 */
+    lv_obj_set_style_border_width(s_chart, 0, 0);
+    lv_obj_set_style_pad_all(s_chart, 4, 0);
+    lv_obj_set_style_line_width(s_chart, 3, LV_PART_ITEMS);  /* 细线 */
+    lv_obj_set_style_line_rounded(s_chart, true, LV_PART_ITEMS);
+    lv_obj_set_style_line_opa(s_chart, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_chart_set_type(s_chart, LV_CHART_TYPE_LINE);
+    lv_chart_set_point_count(s_chart, 32);
+    lv_chart_set_div_line_count(s_chart, 0, 0);               /* 不要网格 */
+    s_chart_ser = lv_chart_add_series(s_chart, lv_color_hex(0x5AC8FA), LV_CHART_AXIS_PRIMARY_Y);
+
+    s_chart_min = lv_label_create(s_chart_page);
+    lv_label_set_text(s_chart_min, "");
+    lv_obj_set_style_text_font(s_chart_min, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(s_chart_min, COLOR_MUTED, 0);
+    lv_obj_align(s_chart_min, LV_ALIGN_TOP_MID, -100, 268);
+
+    s_chart_avg = lv_label_create(s_chart_page);
+    lv_label_set_text(s_chart_avg, "");
+    lv_obj_set_style_text_font(s_chart_avg, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(s_chart_avg, COLOR_TEXT, 0);
+    lv_obj_align(s_chart_avg, LV_ALIGN_TOP_MID, 0, 268);
+
+    s_chart_max = lv_label_create(s_chart_page);
+    lv_label_set_text(s_chart_max, "");
+    lv_obj_set_style_text_font(s_chart_max, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(s_chart_max, COLOR_MUTED, 0);
+    lv_obj_align(s_chart_max, LV_ALIGN_TOP_MID, 100, 268);
+}
+
+void ui_home_show_chart(const char *entity_id, const float *vals, int n,
+                        float vmin, float vmax, float vavg)
+{
+    if (s_chart_page == NULL) {
+        return;
+    }
+    snprintf(s_chart_entity, sizeof(s_chart_entity), "%s", entity_id ? entity_id : "");
+    const ha_entity_t *e = ha_client_find(s_chart_entity);
+    lv_label_set_text(s_chart_title, e ? e->name : s_chart_entity);
+
+    /* 数值按 10 倍整数化（lv_chart 只收整数），纵向留 10% 余量避免贴边 */
+    float lo = vmin, hi = vmax;
+    if (hi - lo < 0.01f) {
+        lo -= 1.0f;
+        hi += 1.0f;
+    }
+    const float pad = (hi - lo) * 0.1f;
+    lv_chart_set_range(s_chart, LV_CHART_AXIS_PRIMARY_Y,
+                       (int32_t)floorf((lo - pad) * 10), (int32_t)ceilf((hi + pad) * 10));
+    lv_chart_set_point_count(s_chart, (uint32_t)(n > 0 ? n : 1));
+    for (int i = 0; i < n; i++) {
+        lv_chart_set_next_value(s_chart, s_chart_ser, (int32_t)lroundf(vals[i] * 10.0f));
+    }
+    lv_chart_refresh(s_chart);
+
+    const char *unit = (e != NULL) ? e->unit : "";
+    char buf[40];
+    snprintf(buf, sizeof(buf), "最低 %.1f%s", vmin, unit);
+    lv_label_set_text(s_chart_min, buf);
+    snprintf(buf, sizeof(buf), "平均 %.1f%s", vavg, unit);
+    lv_label_set_text(s_chart_avg, buf);
+    snprintf(buf, sizeof(buf), "最高 %.1f%s", vmax, unit);
+    lv_label_set_text(s_chart_max, buf);
+
+    s_chart_visible = true;
+    lv_obj_remove_flag(s_chart_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_pos(s_chart_page, 0, 0);
+    lv_obj_set_style_translate_x(s_chart_page, 360, 0);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_chart_page);
+    lv_anim_set_values(&a, 360, 0);
+    lv_anim_set_time(&a, 220);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_exec_cb(&a, anim_translate_cb);
+    lv_anim_start(&a);
+    ESP_LOGI(TAG, "显示折线图: %s (%d 点)", s_chart_entity, n);
+}
+
+void ui_home_close_chart(void)
+{
+    if (s_chart_page == NULL || !s_chart_visible) {
+        return;
+    }
+    s_chart_visible = false;
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_chart_page);
+    lv_anim_set_values(&a, 0, 360);
+    lv_anim_set_time(&a, 200);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
+    lv_anim_set_exec_cb(&a, anim_translate_cb);
+    lv_anim_start(&a);
+    lv_obj_add_flag(s_chart_page, LV_OBJ_FLAG_HIDDEN);
+}
+
+bool ui_home_chart_open(void)
+{
+    return s_chart_visible;
+}
+
 static void build_ui(void)
 {
     lv_obj_t *scr = lv_screen_active();
@@ -1276,6 +1470,8 @@ static void build_ui(void)
 
     build_detail_view(scr);
     s_detail_visible = false;
+    build_chart_view(scr);
+    s_chart_visible = false;
 
     ui_enable_gesture_bubble(scr);   /* 左右滑动翻页 */
 }
