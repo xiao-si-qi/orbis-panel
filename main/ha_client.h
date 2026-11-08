@@ -19,6 +19,12 @@ typedef struct {
     bool on;
     bool valid;
     bool fresh;
+    /* 灯类实体的属性（其它实体会是 0） */
+    int brightness;        /* 0-255 */
+    int color_temp_k;      /* 当前色温（开尔文） */
+    int min_k, max_k;      /* 该实体支持的范围 */
+    bool has_brightness;
+    bool has_tint;         /* 支持色温调节 */
 } ha_entity_t;
 
 /** 读取 settings 里的 HA 地址/令牌，创建 HTTP 客户端。 */
@@ -39,6 +45,9 @@ esp_err_t ha_client_refresh_at(int idx);
 
 /** 执行动作：service 传 "toggle" / "turn_on" / "turn_off"。 */
 esp_err_t ha_client_action(const char *entity_id, const char *service);
+
+/** 带参数的动作用：attrs_json 是额外字段（不含 entity_id），例如 {"brightness_pct":60}。 */
+esp_err_t ha_client_action_attrs(const char *entity_id, const char *service, const char *attrs_json);
 
 /** HA REST 是否可达（最近一次请求成功）。界面上的 HA 圆点用它。 */
 bool ha_client_online(void);

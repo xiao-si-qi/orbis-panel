@@ -120,15 +120,21 @@ static int http_get(const char *url)
     return status;
 }
 
-static int http_post_service(const char *domain, const char *service, const char *entity_id)
+static int http_post_service_ext(const char *domain, const char *service, const char *entity_id,
+                                 const char *attrs_json)
 {
     if (client_create() != ESP_OK) {
         return -1;
     }
     char url[APP_HA_URL_MAX + 64];
     snprintf(url, sizeof(url), "%s/api/services/%s/%s", s_base, domain, service);
-    char body[128];
-    snprintf(body, sizeof(body), "{\"entity_id\":\"%.95s\"}", entity_id);
+    char body[320];
+    if (attrs_json != NULL && attrs_json[0] != '\0') {
+        /* attrs_json 形如 {"brightness_pct":60}，把 entity_id 拼进去 */
+        snprintf(body, sizeof(body), "{\"entity_id\":\"%.95s\",%.200s}", entity_id, attrs_json + 1);
+    } else {
+        snprintf(body, sizeof(body), "{\"entity_id\":\"%.95s\"}", entity_id);
+    }
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     set_auth_header();
@@ -150,6 +156,11 @@ static int http_post_service(const char *domain, const char *service, const char
     return status;
 }
 
+static int http_post_service(const char *domain, const char *service, const char *entity_id)
+{
+    return http_post_service_ext(domain, service, entity_id, NULL);
+}
+
 /* ------------------------------------------------------------------------- */
 /* 解析工具                                                                    */
 /* ------------------------------------------------------------------------- */
@@ -162,6 +173,28 @@ static void str_copy(char *dst, size_t dst_len, const char *src)
     }
     memcpy(dst, src, n);
     dst[n] = '\0';
+}
+
+/** 在 [start,end) 里找 "key": number，返回是否找到。 */
+static bool json_int_in(const char *start, const char *end, const char *key, int *out)
+{
+    char pattern[40];
+    snprintf(pattern, sizeof(pattern), "\"%s\":", key);
+    const char *p = strstr(start, pattern);
+    if (p == NULL || p >= end) {
+        return false;
+    }
+    p += strlen(pattern);
+    while (p < end && (*p == ' ' || *p == '\t')) {
+        p++;
+    }
+    char *endp = NULL;
+    const long v = strtol(p, &endp, 10);
+    if (endp == p) {
+        return false;
+    }
+    *out = (int)v;
+    return true;
 }
 
 static bool json_str_in(const char *start, const char *end, const char *key, char *out, size_t out_len)
@@ -299,6 +332,29 @@ static void parse_entity_object(ha_entity_t *e, const char *obj_start, const cha
     if (json_str_in(obj_start, obj_end, "unit_of_measurement", unit, sizeof(unit))) {
         str_copy(e->unit, sizeof(e->unit), unit);
     }
+
+    /* 灯的属性（没有就是 0 / false） */
+    int v = 0;
+    e->has_brightness = json_int_in(obj_start, obj_end, "brightness", &v) && v > 0;
+    if (e->has_brightness) {
+        e->brightness = v;
+    }
+    e->has_tint = json_int_in(obj_start, obj_end, "color_temp_kelvin", &v);
+    if (e->has_tint) {
+        e->color_temp_k = v;
+    }
+    if (json_int_in(obj_start, obj_end, "min_color_temp_kelvin", &v)) {
+        e->min_k = v;
+    }
+    if (json_int_in(obj_start, obj_end, "max_color_temp_kelvin", &v)) {
+        e->max_k = v;
+    }
+    if (e->min_k == 0) {
+        e->min_k = 2700;
+    }
+    if (e->max_k == 0) {
+        e->max_k = 6500;
+    }
 }
 
 esp_err_t ha_client_fetch_all(void)
@@ -335,6 +391,24 @@ esp_err_t ha_client_refresh_at(int idx)
 /* ------------------------------------------------------------------------- */
 /* 动作                                                                       */
 /* ------------------------------------------------------------------------- */
+
+esp_err_t ha_client_action_attrs(const char *entity_id, const char *service, const char *attrs_json)
+{
+    if (entity_id == NULL || service == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    char domain[24] = {0};
+    const char *dot = strchr(entity_id, '.');
+    size_t dlen = dot ? (size_t)(dot - entity_id) : 0;
+    if (dlen == 0 || dlen >= sizeof(domain)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    memcpy(domain, entity_id, dlen);
+    const int status = http_post_service_ext(domain, service, entity_id, attrs_json);
+    ESP_LOGI(TAG, "%s/%s %s %s -> %d", domain, service, entity_id,
+             attrs_json ? attrs_json : "", status);
+    return (status >= 200 && status < 300) ? ESP_OK : ESP_FAIL;
+}
 
 esp_err_t ha_client_action(const char *entity_id, const char *service)
 {
