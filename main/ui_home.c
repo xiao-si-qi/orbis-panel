@@ -120,7 +120,29 @@ static const char *page_title(int page)
     return s_layout.pages[page].name;
 }
 
-static void show_page(int page)
+/* ---------------- 翻页动画 ---------------- */
+
+#define PAGE_ANIM_MS 220
+
+static bool s_animating;
+
+static void anim_x_cb(void *var, int32_t v)
+{
+    lv_obj_set_x((lv_obj_t *)var, (lv_coord_t)v);
+}
+
+static void anim_done_cb(lv_anim_t *a)
+{
+    lv_obj_t *out = (lv_obj_t *)a->user_data;
+    if (out != NULL && a->var != out) {
+        lv_obj_add_flag(out, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_x(out, 0);
+    }
+    s_animating = false;
+}
+
+/** 切换页面：dir > 0 表示"下一页"（新页从右侧滑入），< 0 反之。 */
+static void show_page_dir(int page, int dir)
 {
     if (s_page_count <= 0) {
         return;
@@ -129,14 +151,18 @@ static void show_page(int page)
         page = s_page_count - 1;
     }
     page %= s_page_count;
+
+    const int prev = s_page;
+    if (page == prev) {
+        return;
+    }
+    if (s_animating) {
+        return;   /* 动画中忽略，避免页面叠在一起 */
+    }
     s_page = page;
 
+    /* 圆点 + 标题立刻更新，不跟着动画走 */
     for (int i = 0; i < s_page_count; i++) {
-        if (i == page) {
-            lv_obj_remove_flag(s_pages[i], LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(s_pages[i], LV_OBJ_FLAG_HIDDEN);
-        }
         if (s_dots[i]) {
             lv_obj_set_style_bg_color(s_dots[i], (i == page) ? COLOR_TEXT : lv_color_hex(0x3A3A3C), 0);
         }
@@ -147,6 +173,47 @@ static void show_page(int page)
         lv_obj_set_style_text_font(s_title, title_font_for(title), 0);
         lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 18);
     }
+
+    lv_obj_t *in = s_pages[page];
+    lv_obj_t *out = s_pages[prev];
+    const lv_coord_t dist = (dir >= 0) ? 360 : -360;
+
+    /* 新页先放到屏幕外，再滑到 0 */
+    lv_obj_remove_flag(in, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_x(in, dist);
+
+    s_animating = true;
+
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, in);
+    lv_anim_set_values(&a, dist, 0);
+    lv_anim_set_time(&a, PAGE_ANIM_MS);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_exec_cb(&a, anim_x_cb);
+    lv_anim_start(&a);
+
+    if (out != NULL && out != in) {
+        lv_anim_t b;
+        lv_anim_init(&b);
+        lv_anim_set_var(&b, out);
+        lv_anim_set_values(&b, 0, -dist);
+        lv_anim_set_time(&b, PAGE_ANIM_MS);
+        lv_anim_set_path_cb(&b, lv_anim_path_ease_out);
+        lv_anim_set_exec_cb(&b, anim_x_cb);
+        lv_anim_set_completed_cb(&b, anim_done_cb);
+        lv_anim_set_user_data(&b, out);
+        lv_anim_start(&b);
+    } else {
+        s_animating = false;
+    }
+}
+
+static void show_page(int page)
+{
+    /* 没有方向信息时按索引大小推断（点圆点翻页走这里） */
+    const int dir = (page >= s_page) ? 1 : -1;
+    show_page_dir(page, dir);
 }
 
 static void dot_clicked_cb(lv_event_t *e)
@@ -203,9 +270,9 @@ static void swipe_cb(lv_event_t *e)
     s_last_gesture_ms = now;
     ESP_LOGI(TAG, "swipe dx=%d -> page %d", dx, (dx < 0 ? s_page + 1 : s_page - 1));
     if (dx < 0) {
-        show_page(s_page + 1);
+        show_page_dir(s_page + 1, 1);
     } else {
-        show_page(s_page - 1);
+        show_page_dir(s_page - 1, -1);
     }
 }
 
@@ -224,10 +291,10 @@ static void gesture_cb(lv_event_t *e)
     s_last_gesture_ms = now;
     switch (lv_indev_get_gesture_dir(indev)) {
     case LV_DIR_LEFT:
-        show_page(s_page + 1);
+        show_page_dir(s_page + 1, 1);
         break;
     case LV_DIR_RIGHT:
-        show_page(s_page - 1);
+        show_page_dir(s_page - 1, -1);
         break;
     default:
         break;
