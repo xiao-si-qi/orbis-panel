@@ -89,7 +89,6 @@ static bool s_press_on_slider;   /* 本次按压是否落在滑条上 */
 /* ---- 灯 / 传感器 的子页面 ---- */
 static lv_obj_t *s_detail;                       /* 全屏子页容器 */
 static lv_obj_t *s_detail_title;
-static lv_obj_t *s_detail_state;
 static lv_obj_t *s_detail_power_btn;
 static lv_obj_t *s_detail_power_label;
 static lv_obj_t *s_detail_br_row, *s_detail_br_slider, *s_detail_br_value;
@@ -700,6 +699,46 @@ static void worker_task(void *arg)
 
 /* ---------------- 子页面（灯的详情） ---------------- */
 
+/** 开尔文转近似色（用于页面背景直观体现色温）。 */
+static lv_color_t kelvin_to_color(int kelvin)
+{
+    /* 2700K 偏橙、4000K 暖白、6500K 偏冷白，简单线性插值 */
+    if (kelvin < 3000) {
+        return lv_color_make(255, 170, 90);
+    } else if (kelvin < 4500) {
+        const int t = (kelvin - 3000) * 100 / 1500;    /* 0..100 */
+        return lv_color_make(255, 170 + (245 - 170) * t / 100, 90 + (215 - 90) * t / 100);
+    } else {
+        const int t = (kelvin - 4500) * 100 / 2000;    /* 0..100 */
+        return lv_color_make(255 - (255 - 210) * t / 100, 245, 215 + (255 - 215) * t / 100);
+    }
+}
+
+/** 背景氛围：按"关=黑、开=灯色 × 亮度"更新子页底色。 */
+static void detail_update_ambience(void)
+{
+    if (s_detail == NULL) {
+        return;
+    }
+    const ha_entity_t *e = ha_client_find(s_detail_entity);
+    if (e == NULL || !e->on) {
+        lv_obj_set_style_bg_color(s_detail, COLOR_BG, 0);      /* 关灯：纯黑 */
+        return;
+    }
+    int k = (s_ct_override_until > lv_tick_get()) ? s_ct_override
+                                                  : (e->color_temp_k ? e->color_temp_k : 4000);
+    int pct = (s_br_override_until > lv_tick_get()) ? s_br_override
+                                                    : (e->brightness * 100 / 255);
+    if (pct <= 0) {
+        pct = 100;
+    }
+    const lv_color_t c = kelvin_to_color(k);
+    /* 亮度越低，底色越暗（最低压到 12%） */
+    const int scale = 8 + pct * 30 / 100;      /* 最高 38%：只是"灯的颜色"提示，不能盖过文字 */
+    lv_obj_set_style_bg_color(s_detail,
+                              lv_color_mix(COLOR_BG, c, (uint8_t)(scale * 255 / 100)), 0);
+}
+
 static void detail_anim_done_cb(lv_anim_t *a);
 static void detail_close_done_cb(lv_anim_t *a);
 
@@ -712,7 +751,12 @@ static void detail_apply_entity(void)
     ESP_LOGD(TAG, "light attrs: br=%d tint=%d k=%d range=%d-%d state=%s",
              e->has_brightness, e->has_tint, e->color_temp_k, e->min_k, e->max_k, e->state);
     lv_label_set_text(s_detail_title, e->name);
-    lv_label_set_text(s_detail_state, e->on ? "已开" : "已关");
+
+    /* 不再显示"已开/已关"文字：开=白色底、关=黑色底，一眼可辨 */
+    lv_obj_set_style_bg_color(s_detail_power_btn, e->on ? lv_color_white() : lv_color_hex(0x151517), 0);
+    lv_obj_set_style_text_color(s_detail_power_label, e->on ? lv_color_black() : lv_color_white(), 0);
+    lv_label_set_text(s_detail_power_label, e->on ? "关" : "开");
+    detail_update_ambience();
 
     if (s_detail_br_row) {
         if (e->has_brightness) {
@@ -767,9 +811,12 @@ static void detail_slider_changed_cb(lv_event_t *e)
         lv_label_set_text(s_detail_ct_value, buf);
     }
 
+    detail_update_ambience();   /* 拖动时底色实时跟着变 */
+
     if (lv_event_get_code(e) != LV_EVENT_RELEASED && lv_event_get_code(e) != LV_EVENT_PRESS_LOST) {
-        return;   /* 拖动过程中只更新文字，松手才发命令 */
+        return;   /* 拖动过程中只更新显示，松手才发命令 */
     }
+    ESP_LOGI(TAG, "滑条松手: %s value=%d", (slider == s_detail_br_slider) ? "亮度" : "色温", v);
     if (s_detail_entity[0] == '\0' || s_cmd_q == NULL) {
         return;
     }
@@ -781,8 +828,10 @@ static void detail_slider_changed_cb(lv_event_t *e)
         s_br_override = v;
         s_br_override_until = lv_tick_get() + OVERRIDE_MS;
         snprintf(cmd.attrs, sizeof(cmd.attrs), "{\"brightness_pct\":%d}", v);
-        lv_label_set_text(s_detail_state, "已开");     /* 乐观：调亮度会开灯 */
-        lv_label_set_text(s_detail_power_label, "关 灯");
+        /* 乐观：调亮度会开灯 —— 按钮立刻变白，底色跟着亮起来 */
+        lv_obj_set_style_bg_color(s_detail_power_btn, lv_color_white(), 0);
+        lv_obj_set_style_text_color(s_detail_power_label, lv_color_black(), 0);
+        lv_label_set_text(s_detail_power_label, "关");
     } else {
         s_ct_override = v;
         s_ct_override_until = lv_tick_get() + OVERRIDE_MS;
@@ -801,8 +850,9 @@ static void detail_power_cb(lv_event_t *e)
     const bool now_on = (ent != NULL) && ent->on;
 
     /* 乐观更新：先翻转界面，立刻有反馈；真正结果稍后由轮询校正 */
-    lv_label_set_text(s_detail_state, now_on ? "已关" : "已开");
-    lv_label_set_text(s_detail_power_label, now_on ? "开 灯" : "关 灯");
+    lv_obj_set_style_bg_color(s_detail_power_btn, now_on ? lv_color_hex(0x151517) : lv_color_white(), 0);
+    lv_obj_set_style_text_color(s_detail_power_label, now_on ? lv_color_white() : lv_color_black(), 0);
+    lv_label_set_text(s_detail_power_label, now_on ? "开" : "关");
 
     cmd_t cmd;
     memset(&cmd, 0, sizeof(cmd));
@@ -843,12 +893,6 @@ static void build_detail_view(lv_obj_t *scr)
     lv_obj_set_style_text_font(s_detail_title, &lv_font_noto_18_cjk, 0);
     lv_obj_set_style_text_color(s_detail_title, COLOR_TEXT, 0);
     lv_obj_align(s_detail_title, LV_ALIGN_TOP_MID, 0, 66);
-
-    s_detail_state = lv_label_create(s_detail);
-    lv_label_set_text(s_detail_state, "");
-    lv_obj_set_style_text_font(s_detail_state, &lv_font_noto_18_cjk, 0);
-    lv_obj_set_style_text_color(s_detail_state, COLOR_MUTED, 0);
-    lv_obj_align(s_detail_state, LV_ALIGN_TOP_MID, 0, 96);
 
     /* 开关按钮 */
     s_detail_power_btn = lv_button_create(s_detail);

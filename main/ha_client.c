@@ -129,8 +129,11 @@ static int http_post_service_ext(const char *domain, const char *service, const 
     char url[APP_HA_URL_MAX + 64];
     snprintf(url, sizeof(url), "%s/api/services/%s/%s", s_base, domain, service);
     char body[320];
-    if (attrs_json != NULL && attrs_json[0] != '\0') {
-        /* attrs_json 形如 {"brightness_pct":60}，把 entity_id 拼进去 */
+    if (attrs_json != NULL && attrs_json[0] == '{') {
+        /* attrs_json 形如 {"brightness_pct":60}：跳过开头的 '{'，它自带结尾的 '}' */
+        snprintf(body, sizeof(body), "{\"entity_id\":\"%.95s\",", entity_id);
+        strncat(body, attrs_json + 1, sizeof(body) - strlen(body) - 1);
+    } else if (attrs_json != NULL && attrs_json[0] != '\0') {
         snprintf(body, sizeof(body), "{\"entity_id\":\"%.95s\",%.200s}", entity_id, attrs_json + 1);
     } else {
         snprintf(body, sizeof(body), "{\"entity_id\":\"%.95s\"}", entity_id);
@@ -142,6 +145,7 @@ static int http_post_service_ext(const char *domain, const char *service, const 
     esp_http_client_set_method(s_client, HTTP_METHOD_POST);
     esp_http_client_set_url(s_client, url);
     esp_http_client_set_post_field(s_client, body, (int)strlen(body));
+    ESP_LOGD(TAG, "POST body(%d): %s", (int)strlen(body), body);
 
     int status = -1;
     esp_err_t err = esp_http_client_perform(s_client);
