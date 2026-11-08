@@ -208,6 +208,17 @@ static void handle_cmd(const char *payload)
 
     ESP_LOGI(TAG, "cmd '%s' seq=%u", cmd, seq);
 
+    if (strcmp(cmd, "detail") == 0) {
+        /* 调试：{cmd:"detail", entity:"light.xxx"} 直接打开子页 */
+        const cJSON *jentity = cJSON_GetObjectItemCaseSensitive(root, "entity");
+        if (cJSON_IsString(jentity)) {
+            lv_lock();
+            ui_home_open_detail(jentity->valuestring);
+            lv_unlock();
+        }
+        cJSON_Delete(root);
+        return;
+    }
     if (strcmp(cmd, "reboot") == 0) {
         vTaskDelay(pdMS_TO_TICKS(300));
         esp_restart();

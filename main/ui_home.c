@@ -363,6 +363,8 @@ static void tile_clicked_cb(lv_event_t *e)
     if (lv_tick_get() - s_last_gesture_ms < 400) {
         return;   /* 刚滑动过，忽略这次"点击" */
     }
+    ESP_LOGI(TAG, "tile 点击: %s type=%d (detail=%p)", w->entity, (int)w->type, (void *)s_detail);
+
     /* 灯：点开详情页（亮度/色温）；其它实体保持直接动作 */
     if (strncmp(w->entity, "light.", 6) == 0) {
         ui_home_open_detail(w->entity);
@@ -858,8 +860,10 @@ static void build_detail_view(lv_obj_t *scr)
 void ui_home_open_detail(const char *entity_id)
 {
     if (s_detail == NULL || entity_id == NULL) {
+        ESP_LOGW(TAG, "open detail 失败: detail=%p entity=%s", (void *)s_detail, entity_id ? entity_id : "(null)");
         return;
     }
+    ESP_LOGI(TAG, "open detail: %s", entity_id);
     snprintf(s_detail_entity, sizeof(s_detail_entity), "%s", entity_id);
     detail_apply_entity();
     s_detail_visible = true;
@@ -897,6 +901,7 @@ void ui_home_close_detail(void)
     if (s_detail == NULL || !s_detail_visible) {
         return;
     }
+    ESP_LOGI(TAG, "close detail");
     s_detail_visible = false;
     lv_anim_t a;
     lv_anim_init(&a);
