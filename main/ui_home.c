@@ -433,6 +433,7 @@ static void tile_clicked_cb(lv_event_t *e)
             (lv_tick_get() - s_chart_cache_at) < 60000) {
             ui_home_show_chart(w->entity, s_chart_cache_vals, s_chart_cache_n,
                                s_chart_cache_min, s_chart_cache_max, s_chart_cache_avg);
+            ESP_LOGI(TAG, "折线图命中缓存: %s", w->entity);
             return;
         }
 
@@ -451,6 +452,9 @@ static void tile_clicked_cb(lv_event_t *e)
             const ha_entity_t *ent = ha_client_find(w->entity);
             lv_label_set_text(s_chart_title, ent ? ent->name : w->entity);
             lv_label_set_text(s_chart_span, "加载中…");
+            lv_label_set_text(s_chart_min, "");
+            lv_label_set_text(s_chart_avg, "");
+            lv_label_set_text(s_chart_max, "");
             s_chart_pts_n = 0;               /* 清掉上一张图的线 */
             lv_obj_invalidate(s_chart);
             s_chart_visible = true;
@@ -785,6 +789,11 @@ static void worker_task(void *arg)
                         const ha_entity_t *ent = ha_client_find(cmd.entity);
                         lv_label_set_text(s_chart_title, ent ? ent->name : cmd.entity);
                         lv_label_set_text(s_chart_span, "取不到历史数据，稍后再试");
+                        lv_label_set_text(s_chart_min, "");
+                        lv_label_set_text(s_chart_avg, "");
+                        lv_label_set_text(s_chart_max, "");
+                        s_chart_pts_n = 0;
+                        lv_obj_invalidate(s_chart);
                         /* 页面保持打开（返回手势照常），但允许下次重新请求 */
                         s_chart_wanted = false;
                         s_chart_visible = true;
