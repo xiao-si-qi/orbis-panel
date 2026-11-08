@@ -84,6 +84,7 @@ static lv_obj_t *s_ota_bar;
 static lv_obj_t *s_ota_status;
 
 static int s_page;
+static uint32_t s_last_gesture_ms;   /* 最近一次手势时间，用来吃掉误触 */
 static QueueHandle_t s_cmd_q;
 
 typedef struct {
@@ -153,6 +154,61 @@ static void dot_clicked_cb(lv_event_t *e)
     show_page((int)(intptr_t)lv_event_get_user_data(e));
 }
 
+/* 让手势从任意子对象冒泡到页面/屏幕（否则滑在卡片上就没反应） */
+static void ui_enable_gesture_bubble(lv_obj_t *obj)
+{
+    lv_obj_add_flag(obj, LV_OBJ_FLAG_GESTURE_BUBBLE | LV_OBJ_FLAG_EVENT_BUBBLE);
+    const uint32_t n = lv_obj_get_child_count(obj);
+    for (uint32_t i = 0; i < n; i++) {
+        ui_enable_gesture_bubble(lv_obj_get_child(obj, i));
+    }
+}
+
+/* 原生手势在触摸驱动上不稳定，这里直接按"按下 → 抬起"的位移判断 */
+static void swipe_cb(lv_event_t *e)
+{
+    static lv_point_t start;
+    static bool pressed;
+
+    const lv_event_code_t code = lv_event_get_code(e);
+    lv_indev_t *indev = lv_indev_active();
+    if (indev == NULL) {
+        return;
+    }
+
+    lv_point_t p;
+    lv_indev_get_point(indev, &p);
+
+    if (code == LV_EVENT_PRESSED) {
+        start = p;
+        pressed = true;
+        return;
+    }
+    if (code != LV_EVENT_RELEASED || !pressed) {
+        return;
+    }
+    pressed = false;
+
+    const int dx = p.x - start.x;
+    const int dy = p.y - start.y;
+    ESP_LOGD(TAG, "swipe dx=%d dy=%d", dx, dy);
+
+    if (abs(dx) < 40 || abs(dx) < abs(dy)) {
+        return;
+    }
+    const uint32_t now = lv_tick_get();
+    if (now - s_last_gesture_ms < 400) {
+        return;
+    }
+    s_last_gesture_ms = now;
+    ESP_LOGI(TAG, "swipe dx=%d -> page %d", dx, (dx < 0 ? s_page + 1 : s_page - 1));
+    if (dx < 0) {
+        show_page(s_page + 1);
+    } else {
+        show_page(s_page - 1);
+    }
+}
+
 static void gesture_cb(lv_event_t *e)
 {
     (void)e;
@@ -160,6 +216,12 @@ static void gesture_cb(lv_event_t *e)
     if (indev == NULL) {
         return;
     }
+    /* 去抖：一次滑动可能冒泡出多个 GESTURE，避免连翻两页 */
+    const uint32_t now = lv_tick_get();
+    if (now - s_last_gesture_ms < 400) {
+        return;
+    }
+    s_last_gesture_ms = now;
     switch (lv_indev_get_gesture_dir(indev)) {
     case LV_DIR_LEFT:
         show_page(s_page + 1);
@@ -181,6 +243,9 @@ static void tile_clicked_cb(lv_event_t *e)
     tile_widget_t *w = (tile_widget_t *)lv_event_get_user_data(e);
     if (w == NULL || s_cmd_q == NULL) {
         return;
+    }
+    if (lv_tick_get() - s_last_gesture_ms < 400) {
+        return;   /* 刚滑动过，忽略这次"点击" */
     }
     cmd_t cmd;
     memset(&cmd, 0, sizeof(cmd));
@@ -282,7 +347,6 @@ static void build_status_page(lv_obj_t *scr)
     lv_obj_set_style_border_width(page, 0, 0);
     lv_obj_set_style_pad_all(page, 0, 0);
     lv_obj_remove_flag(page, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(page, gesture_cb, LV_EVENT_GESTURE, NULL);
 
     /* System 页的参数放在一张卡片里：与其他卡片同样的黑色半透明，
        叠在背景图 + 暗化层之上，比背景更暗一些。 */
@@ -485,6 +549,7 @@ static void build_ui(void)
 {
     lv_obj_t *scr = lv_screen_active();
     lv_obj_clean(scr);
+    lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
     bg_image_bind(scr);       /* 背景图铺在最底层 */
     lv_obj_set_style_bg_color(scr, COLOR_BG, 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
@@ -537,8 +602,7 @@ static void build_ui(void)
         lv_obj_set_style_border_width(page, 0, 0);
         lv_obj_set_style_pad_all(page, 0, 0);
         lv_obj_remove_flag(page, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_add_event_cb(page, gesture_cb, LV_EVENT_GESTURE, NULL);
-        s_pages[p] = page;
+            s_pages[p] = page;
 
         const int n = s_layout.pages[p].tile_count;
         s_page_tiles[p] = n;
@@ -589,7 +653,11 @@ static void build_ui(void)
     s_refresh_timer = lv_timer_create(refresh_timer_cb, 500, NULL);
 
     lv_obj_add_event_cb(scr, gesture_cb, LV_EVENT_GESTURE, NULL);
+    lv_obj_add_event_cb(scr, swipe_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(scr, swipe_cb, LV_EVENT_RELEASED, NULL);
     ESP_LOGI(TAG, "UI built: %d page(s) + system", s_json_pages);
+
+    ui_enable_gesture_bubble(scr);   /* 左右滑动翻页 */
 }
 
 static void apply_async_cb(void *arg)
@@ -602,6 +670,7 @@ void ui_home_boot(void)
 {
     lv_obj_t *scr = lv_screen_active();
     lv_obj_clean(scr);
+    lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
     bg_image_bind(scr);       /* 背景图铺在最底层 */
     lv_obj_set_style_bg_color(scr, COLOR_BG, 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
