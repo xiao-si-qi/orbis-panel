@@ -9,9 +9,11 @@
 
 #include <string.h>
 #include <time.h>
+#include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdio.h>
+#include <math.h>
 #include <stdlib.h>
 
 #include "freertos/FreeRTOS.h"
@@ -574,18 +576,29 @@ esp_err_t ha_client_history(const char *entity_id, int hours, float *values, int
         free(buf);
         return ESP_FAIL;
     }
-    xSemaphoreTake(s_lock, portMAX_DELAY);
-    set_auth_header();
-    esp_http_client_set_method(s_client, HTTP_METHOD_GET);
-    esp_http_client_set_url(s_client, url);
-    s_sink = buf;
-    s_sink_len = 0;
-    s_sink_cap = HIST_MAX_BYTES - 1;
-    buf[0] = '\0';
-    esp_err_t herr = esp_http_client_perform(s_client);
-    int hstatus = esp_http_client_get_status_code(s_client);
-    s_sink = NULL;
-    xSemaphoreGive(s_lock);
+    esp_err_t herr = ESP_FAIL;
+    int hstatus = -1;
+    for (int attempt = 0; attempt < 2; attempt++) {
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        set_auth_header();
+        esp_http_client_set_method(s_client, HTTP_METHOD_GET);
+        esp_http_client_set_url(s_client, url);
+        s_sink = buf;
+        s_sink_len = 0;
+        s_sink_cap = HIST_MAX_BYTES - 1;
+        buf[0] = '\0';
+        herr = esp_http_client_perform(s_client);
+        hstatus = esp_http_client_get_status_code(s_client);
+        s_sink = NULL;
+        if (herr != ESP_OK) {
+            esp_http_client_close(s_client);   /* 长连接坏了：关掉重来 */
+        }
+        xSemaphoreGive(s_lock);
+        if (herr == ESP_OK && hstatus == 200) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(300));
+    }
 
     if (herr != ESP_OK || hstatus != 200) {
         ESP_LOGW(TAG, "history %s -> %s, HTTP %d", entity_id, esp_err_to_name(herr), hstatus);
@@ -613,7 +626,8 @@ esp_err_t ha_client_history(const char *entity_id, int hours, float *values, int
         char *endp = NULL;
         const double v = strtod(p, &endp);
         const char *quote = strchr(p, '"');
-        if (endp != p && quote != NULL && endp <= quote) {
+        if (endp != p && quote != NULL && endp <= quote && isfinite(v) &&
+            v > -1.0e6 && v < 1.0e6) {
             raw[raw_n++] = (float)v;      /* 只收数字型状态，unknown/on/off 自动跳过 */
         }
         p = quote ? quote : p;

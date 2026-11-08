@@ -1278,7 +1278,12 @@ static void build_chart_view(lv_obj_t *scr)
 void ui_home_show_chart(const char *entity_id, const float *vals, int n,
                         float vmin, float vmax, float vavg)
 {
-    if (s_chart_page == NULL) {
+    if (s_chart_page == NULL || vals == NULL || n <= 0) {
+        return;
+    }
+    if (!isfinite(vmin) || !isfinite(vmax) || !isfinite(vavg) ||
+        fabsf(vmin) > 1.0e5f || fabsf(vmax) > 1.0e5f) {
+        ESP_LOGW(TAG, "图表数值异常，忽略 (%f %f %f)", vmin, vmax, vavg);
         return;
     }
     snprintf(s_chart_entity, sizeof(s_chart_entity), "%s", entity_id ? entity_id : "");
@@ -1292,8 +1297,12 @@ void ui_home_show_chart(const char *entity_id, const float *vals, int n,
         hi += 1.0f;
     }
     const float pad = (hi - lo) * 0.1f;
-    lv_chart_set_range(s_chart, LV_CHART_AXIS_PRIMARY_Y,
-                       (int32_t)floorf((lo - pad) * 10), (int32_t)ceilf((hi + pad) * 10));
+    float lo10 = (lo - pad) * 10.0f;
+    float hi10 = (hi + pad) * 10.0f;
+    if (lo10 < -1000000.0f) lo10 = -1000000.0f;
+    if (hi10 > 1000000.0f) hi10 = 1000000.0f;
+    if (hi10 - lo10 < 1.0f) hi10 = lo10 + 1.0f;
+    lv_chart_set_range(s_chart, LV_CHART_AXIS_PRIMARY_Y, (int32_t)lo10, (int32_t)hi10);
     lv_chart_set_point_count(s_chart, (uint32_t)(n > 0 ? n : 1));
     for (int i = 0; i < n; i++) {
         lv_chart_set_next_value(s_chart, s_chart_ser, (int32_t)lroundf(vals[i] * 10.0f));
