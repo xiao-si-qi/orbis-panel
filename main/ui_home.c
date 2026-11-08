@@ -762,7 +762,17 @@ static void worker_task(void *arg)
                     }
                     lv_unlock();
                 } else {
-                    ESP_LOGW(TAG, "折线图无数据: %s", cmd.entity);
+                    ESP_LOGW(TAG, "折线图无数据: %s (%s)", cmd.entity, esp_err_to_name(he));
+                    lv_lock();
+                    if (cmd.gen == s_chart_gen && s_chart_wanted) {
+                        lv_label_set_text(s_chart_title, ha_client_find(cmd.entity)
+                                                          ? ha_client_find(cmd.entity)->name
+                                                          : "没有数据");
+                        lv_label_set_text(s_chart_span, "取不到历史数据");
+                        s_chart_visible = false;      /* 允许下次重新请求 */
+                        s_chart_wanted = false;
+                    }
+                    lv_unlock();
                 }
                 continue;
             }
@@ -1556,7 +1566,7 @@ void ui_home_boot(void)
     lv_obj_align(s_hint, LV_ALIGN_CENTER, 0, 20);
 
     if (s_cmd_q == NULL) {
-        s_cmd_q = xQueueCreate(8, sizeof(cmd_t));
+        s_cmd_q = xQueueCreate(16, sizeof(cmd_t));
         if (s_cmd_q) {
             xTaskCreate(worker_task, "ui_cmd", 6144, NULL, 4, NULL);
         }

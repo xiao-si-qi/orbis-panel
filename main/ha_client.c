@@ -548,6 +548,7 @@ esp_err_t ha_client_history(const char *entity_id, int hours, float *values, int
     if (s_base[0] == '\0') {
         return ESP_ERR_INVALID_STATE;
     }
+    ESP_LOGI(TAG, "history start: %s", entity_id);
 
     char *buf = heap_caps_malloc(HIST_MAX_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (buf == NULL) {
@@ -579,7 +580,11 @@ esp_err_t ha_client_history(const char *entity_id, int hours, float *values, int
     esp_err_t herr = ESP_FAIL;
     int hstatus = -1;
     for (int attempt = 0; attempt < 2; attempt++) {
-        xSemaphoreTake(s_lock, portMAX_DELAY);
+        if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(3000)) != pdTRUE) {
+            ESP_LOGW(TAG, "history: 等锁超时，放弃");
+            free(buf);
+            return ESP_ERR_TIMEOUT;
+        }
         set_auth_header();
         esp_http_client_set_method(s_client, HTTP_METHOD_GET);
         esp_http_client_set_url(s_client, url);
