@@ -87,8 +87,8 @@ bool bsp_touch_read(uint16_t *x, uint16_t *y)
         *y = (uint16_t)(BSP_LCD_V_RES - 1 - py);
         break;
     case 270:
-        *x = py;
-        *y = (uint16_t)(BSP_LCD_V_RES - 1 - px);
+        *x = (uint16_t)(BSP_LCD_H_RES - 1 - py);   /* 270 度：X 镜像、Y 直接取 */
+        *y = px;
         break;
     default:
         break;
