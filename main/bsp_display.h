@@ -37,6 +37,9 @@ void bsp_display_screen_on(bool on);
 
 esp_lcd_panel_handle_t bsp_display_panel(void);
 
+/** 屏幕方向（0/90/180/270），走面板 MADCTL 硬件旋转。 */
+void bsp_display_set_rotation(int deg);
+
 #ifdef __cplusplus
 }
 #endif

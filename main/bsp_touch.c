@@ -12,6 +12,12 @@ static const char *TAG = "bsp_touch";
 
 static cst816s_handle_t s_touch;
 static i2c_master_bus_handle_t s_bus;
+static int s_rotation;      /* 0/90/180/270：触摸坐标要和屏幕一起转 */
+
+void bsp_touch_set_rotation(int deg)
+{
+    s_rotation = deg;
+}
 
 /** 扫描 I2C 总线（临时诊断：看看除了触摸还有没有别的器件，比如加速度计）。 */
 void bsp_touch_scan_bus(void)
@@ -66,6 +72,26 @@ bool bsp_touch_read(uint16_t *x, uint16_t *y)
     }
     if (*y >= BSP_LCD_V_RES) {
         *y = BSP_LCD_V_RES - 1;
+    }
+
+    /* 触摸芯片是固定方向的；屏幕硬件旋转后，这里换算成逻辑坐标 */
+    const uint16_t px = *x;
+    const uint16_t py = *y;
+    switch (s_rotation) {
+    case 90:
+        *x = (uint16_t)(BSP_LCD_H_RES - 1 - py);
+        *y = px;
+        break;
+    case 180:
+        *x = (uint16_t)(BSP_LCD_H_RES - 1 - px);
+        *y = (uint16_t)(BSP_LCD_V_RES - 1 - py);
+        break;
+    case 270:
+        *x = py;
+        *y = (uint16_t)(BSP_LCD_V_RES - 1 - px);
+        break;
+    default:
+        break;
     }
     return pressed;
 }

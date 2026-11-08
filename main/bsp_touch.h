@@ -12,6 +12,9 @@ extern "C" {
 /** 初始化 I2C 总线 + CST816S。 */
 esp_err_t bsp_touch_init(void);
 
+/** 触摸坐标换算用的屏幕方向（0/90/180/270）。 */
+void bsp_touch_set_rotation(int deg);
+
 /** 扫描 I2C 总线并打印发现的地址（诊断用）。 */
 void bsp_touch_scan_bus(void);
 

@@ -82,6 +82,34 @@ void bsp_display_set_flush_done_hook(bsp_display_flush_done_cb_t cb, void *user_
     s_done_ctx = user_ctx;
 }
 
+/* 屏幕方向：用面板的 MADCTL（swap_xy / mirror）做硬件旋转，不消耗 CPU */
+void bsp_display_set_rotation(int deg)
+{
+    if (s_panel == NULL) {
+        return;
+    }
+    switch (deg) {
+    case 90:
+        esp_lcd_panel_swap_xy(s_panel, true);
+        esp_lcd_panel_mirror(s_panel, true, false);
+        break;
+    case 180:
+        esp_lcd_panel_swap_xy(s_panel, false);
+        esp_lcd_panel_mirror(s_panel, true, true);
+        break;
+    case 270:
+        esp_lcd_panel_swap_xy(s_panel, true);
+        esp_lcd_panel_mirror(s_panel, false, true);
+        break;
+    case 0:
+    default:
+        esp_lcd_panel_swap_xy(s_panel, false);
+        esp_lcd_panel_mirror(s_panel, false, false);
+        break;
+    }
+    ESP_LOGI(TAG, "屏幕方向（硬件）: %d 度", deg);
+}
+
 esp_lcd_panel_handle_t bsp_display_panel(void)
 {
     return s_panel;

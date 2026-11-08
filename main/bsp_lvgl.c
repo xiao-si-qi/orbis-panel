@@ -125,15 +125,10 @@ void bsp_lvgl_set_rotation(int deg)
     if (s_disp == NULL) {
         return;
     }
-    lv_display_rotation_t rot = LV_DISPLAY_ROTATION_0;
-    if (deg == 90) {
-        rot = LV_DISPLAY_ROTATION_90;
-    } else if (deg == 180) {
-        rot = LV_DISPLAY_ROTATION_180;
-    } else if (deg == 270) {
-        rot = LV_DISPLAY_ROTATION_270;
-    }
-    lv_display_set_rotation(s_disp, rot);
+    /* LVGL 的 lv_display_set_rotation 只改逻辑坐标系、不旋转像素（需要驱动自己转），
+       这里改成面板硬件旋转 + 触摸坐标换算，零 CPU 开销 */
+    bsp_display_set_rotation(deg);
+    bsp_touch_set_rotation(deg);
     ESP_LOGI(TAG, "屏幕方向设置为 %d 度", deg);
 }
 
