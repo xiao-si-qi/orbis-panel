@@ -33,7 +33,7 @@ static const char *TAG = "ota";
 
 static volatile bool s_busy;
 static volatile int s_percent = -1;
-static char s_status[96] = "idle";
+static char s_status[96] = "";   /* 空 = 空闲，UI 不显示 */
 static char s_manifest[MANIFEST_MAX];
 static size_t s_manifest_len;
 
@@ -133,9 +133,9 @@ static void ota_task(void *arg)
     char url[320];
 
     if (req != NULL && req->use_manifest) {
-        snprintf(s_status, sizeof(s_status), "checking...");
+        snprintf(s_status, sizeof(s_status), "检查中…");
         if (fetch_manifest(version, sizeof(version), file, sizeof(file)) != ESP_OK) {
-            snprintf(s_status, sizeof(s_status), "no manifest");
+            snprintf(s_status, sizeof(s_status), "没有固件信息");
             goto done;
         }
         const app_settings_t *cfg = app_settings_get();
@@ -146,18 +146,18 @@ static void ota_task(void *arg)
             snprintf(version, sizeof(version), "%s", req->version);
         }
     } else {
-        snprintf(s_status, sizeof(s_status), "no target");
+        snprintf(s_status, sizeof(s_status), "没有可用版本");
         goto done;
     }
 
     const char *current = ota_current_version();
     ESP_LOGI(TAG, "current=%s remote=%s", current, version);
     if (version[0] && strcmp(version, current) == 0) {
-        snprintf(s_status, sizeof(s_status), "up to date: %s", current);
+        snprintf(s_status, sizeof(s_status), "已是最新 %s", current);
         goto done;
     }
 
-    snprintf(s_status, sizeof(s_status), "downloading %s", version);
+    snprintf(s_status, sizeof(s_status), "正在下载 %s", version);
     s_percent = 0;
 
     esp_http_client_config_t http_cfg = {
@@ -174,7 +174,7 @@ static void ota_task(void *arg)
     esp_err_t err = esp_https_ota_begin(&ota_cfg, &handle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "ota begin failed: %s", esp_err_to_name(err));
-        snprintf(s_status, sizeof(s_status), "begin failed");
+        snprintf(s_status, sizeof(s_status), "开始失败");
         goto done;
     }
 
@@ -194,7 +194,7 @@ static void ota_task(void *arg)
 
     if (err == ESP_OK && esp_https_ota_is_complete_data_received(handle)) {
         s_percent = 100;
-        snprintf(s_status, sizeof(s_status), "rebooting...");
+        snprintf(s_status, sizeof(s_status), "即将重启…");
         esp_err_t fin = esp_https_ota_finish(handle);
         if (fin == ESP_OK) {
             ESP_LOGI(TAG, "OTA done, restarting");
@@ -202,11 +202,11 @@ static void ota_task(void *arg)
             esp_restart();
         }
         ESP_LOGE(TAG, "ota finish failed: %s", esp_err_to_name(fin));
-        snprintf(s_status, sizeof(s_status), "finish failed");
+        snprintf(s_status, sizeof(s_status), "写入失败");
     } else {
         ESP_LOGE(TAG, "ota failed: %s", esp_err_to_name(err));
         esp_https_ota_abort(handle);
-        snprintf(s_status, sizeof(s_status), "download failed");
+        snprintf(s_status, sizeof(s_status), "下载失败");
     }
 
 done:
@@ -225,7 +225,7 @@ static void ota_launch(ota_req_t *req)
     }
     s_busy = true;
     s_percent = -1;
-    snprintf(s_status, sizeof(s_status), "checking...");
+    snprintf(s_status, sizeof(s_status), "检查中…");
     xTaskCreate(ota_task, "ota", 8192, req, 5, NULL);
 }
 

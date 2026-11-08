@@ -326,7 +326,7 @@ static void build_status_page(lv_obj_t *scr)
 
     s_ota_status = lv_label_create(page);
     lv_label_set_text(s_ota_status, "");
-    lv_obj_set_style_text_font(s_ota_status, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(s_ota_status, &lv_font_noto_18_cjk, 0);
     lv_obj_set_style_text_color(s_ota_status, COLOR_MUTED, 0);
     lv_obj_set_width(s_ota_status, 300);
     lv_obj_set_style_text_align(s_ota_status, LV_TEXT_ALIGN_CENTER, 0);
@@ -365,11 +365,23 @@ static void refresh_status_page(void)
         const int p = ota_percent();
         lv_bar_set_value(s_ota_bar, p < 0 ? 0 : p, LV_ANIM_OFF);
         lv_label_set_text(s_ota_btn_label, p < 0 ? "检查中" : "升级中");
-        lv_label_set_text(s_ota_status, ota_status_text());
+        const char *ota_text = ota_status_text();
+    lv_label_set_text(s_ota_status, ota_text);
+    if (ota_text[0] != '\0') {
+        lv_obj_remove_flag(s_ota_status, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_ota_status, LV_OBJ_FLAG_HIDDEN);
+    }
     } else {
         lv_obj_add_flag(s_ota_bar, LV_OBJ_FLAG_HIDDEN);
         lv_label_set_text(s_ota_btn_label, "检查更新");
-        lv_label_set_text(s_ota_status, ota_status_text());
+        const char *ota_text = ota_status_text();
+    lv_label_set_text(s_ota_status, ota_text);
+    if (ota_text[0] != '\0') {
+        lv_obj_remove_flag(s_ota_status, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_ota_status, LV_OBJ_FLAG_HIDDEN);
+    }
     }
 }
 
