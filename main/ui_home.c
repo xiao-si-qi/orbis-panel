@@ -75,6 +75,7 @@ static lv_obj_t *s_title;
 static lv_obj_t *s_wifi_icon;
 static lv_obj_t *s_wifi_label;
 static lv_color_t s_wifi_color;
+static int s_wifi_level;      /* 0..4 格 */
 static lv_obj_t *s_ha_dot;
 static lv_obj_t *s_hint;
 static lv_timer_t *s_refresh_timer;
@@ -547,7 +548,7 @@ static void make_tile(lv_obj_t *parent, int page, int slot, int col, int row)
     w->value = value;
 }
 
-/** 用弧线画 WiFi 图标（和手机上的形状一致），颜色随信号强度。 */
+/** 信号格数：四根竖条，点亮的条数表示强度（和手机信号格一样）。 */
 static void wifi_icon_draw_cb(lv_event_t *e)
 {
     lv_obj_t *obj = lv_event_get_target(e);
@@ -558,29 +559,29 @@ static void wifi_icon_draw_cb(lv_event_t *e)
     lv_area_t a;
     lv_obj_get_coords(obj, &a);
 
-    lv_draw_arc_dsc_t d;
-    lv_draw_arc_dsc_init(&d);
-    d.color = s_wifi_color;
-    d.width = 2;
-    d.rounded = 1;
-    d.start_angle = 205;      /* 顶部圆弧 */
-    d.end_angle = 335;
-    d.center.x = (a.x1 + a.x2) / 2;
-    d.center.y = a.y2 - 2;
+    const int bars = 4;
+    const int bar_w = 4;
+    const int gap = 3;
+    const int heights[4] = {7, 10, 13, 16};
+    const int total_w = bars * bar_w + (bars - 1) * gap;
+    const int x0 = (a.x1 + a.x2) / 2 - total_w / 2;
+    const int y_bottom = a.y2 - 1;
 
-    const int radii[3] = {9, 6, 3};
-    for (int i = 0; i < 3; i++) {
-        d.radius = radii[i];
-        lv_draw_arc(layer, &d);
+    for (int i = 0; i < bars; i++) {
+        lv_draw_rect_dsc_t rd;
+        lv_draw_rect_dsc_init(&rd);
+        rd.radius = 1;
+        const bool lit = (i < s_wifi_level);
+        rd.bg_color = lit ? s_wifi_color : lv_color_hex(0x3A3A3C);
+        rd.bg_opa = LV_OPA_COVER;
+
+        lv_area_t bar;
+        bar.x1 = x0 + i * (bar_w + gap);
+        bar.x2 = bar.x1 + bar_w - 1;
+        bar.y2 = y_bottom;
+        bar.y1 = y_bottom - heights[i] + 1;
+        lv_draw_rect(layer, &rd, &bar);
     }
-
-    lv_draw_rect_dsc_t rd;
-    lv_draw_rect_dsc_init(&rd);
-    rd.bg_color = s_wifi_color;
-    rd.bg_opa = LV_OPA_COVER;
-    rd.radius = 1;
-    lv_area_t dot = {d.center.x - 1, d.center.y - 1, d.center.x + 1, d.center.y + 1};
-    lv_draw_rect(layer, &rd, &dot);
 }
 
 static lv_obj_t *make_status_dot(lv_obj_t *parent, int x, int y)
@@ -802,15 +803,21 @@ static void refresh_timer_cb(lv_timer_t *t)
         } else {
             s_wifi_color = lv_color_hex(0xFF9F0A);     /* 弱：橙 */
         }
+        /* 信号格数：-55 以上 4 格，往下每档减一格 */
+        if (!wifi_manager_is_connected()) {
+            s_wifi_level = 0;
+        } else if (rssi >= -55) {
+            s_wifi_level = 4;
+        } else if (rssi >= -67) {
+            s_wifi_level = 3;
+        } else if (rssi >= -78) {
+            s_wifi_level = 2;
+        } else {
+            s_wifi_level = 1;
+        }
         lv_obj_invalidate(s_wifi_icon);
         if (s_wifi_label != NULL) {
-            char buf[12];
-            if (wifi_manager_is_connected()) {
-                snprintf(buf, sizeof(buf), "%d", rssi);
-            } else {
-                snprintf(buf, sizeof(buf), "--");
-            }
-            lv_label_set_text(s_wifi_label, buf);
+            lv_label_set_text(s_wifi_label, "");     /* 只留格数，不显示 dBm */
         }
     }
     }
