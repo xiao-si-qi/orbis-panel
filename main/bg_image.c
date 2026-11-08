@@ -38,6 +38,7 @@ typedef struct {
     int count;
     int interval_s;
     int dim_pct;
+    int card_pct;      /* 卡片黑色蒙版（0-95） */
 } bg_cfg_t;
 
 static bg_cfg_t s_cfg;
@@ -166,7 +167,7 @@ static bool decode_to_frame(const uint8_t *jpg, size_t jpg_len)
         .outbuf_size = (uint32_t)need,
         .out_format = JPEG_IMAGE_FORMAT_RGB565,
         .out_scale = scale,
-        .flags = {.swap_color_bytes = 1},   /* LVGL 用 RGB565 大端序 */
+        .flags = {.swap_color_bytes = 0},   /* tjpgd 直接写 uint16_t，已是 LVGL 需要的小端 */
     };
     esp_jpeg_image_output_t out = {0};
     const esp_err_t err = esp_jpeg_decode(&cfg, &out);
@@ -281,6 +282,9 @@ void bg_image_init(void)
         return;
     }
     s_initialized = true;
+    s_cfg.interval_s = 60;
+    s_cfg.dim_pct = 35;
+    s_cfg.card_pct = 60;
     memset(&s_dsc, 0, sizeof(s_dsc));
     s_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
     s_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
@@ -292,13 +296,9 @@ void bg_image_bind(lv_obj_t *parent)
         return;
     }
 
-    s_img = lv_image_create(parent);
-    lv_obj_set_size(s_img, BG_W, BG_H);
-    lv_obj_set_pos(s_img, 0, 0);
-    lv_obj_move_background(s_img);
-    lv_obj_remove_flag(s_img, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(s_img, LV_OBJ_FLAG_HIDDEN);
-
+    /* 层级（从底到顶）：图片 → 暗化层 → 卡片。
+       顺序必须是"先建暗化层放到底，再建图片放到底"，
+       这样图片落在索引 0、暗化层紧随其后。 */
     s_dim = lv_obj_create(parent);
     lv_obj_remove_style_all(s_dim);
     lv_obj_set_size(s_dim, BG_W, BG_H);
@@ -307,18 +307,27 @@ void bg_image_bind(lv_obj_t *parent)
     lv_obj_set_style_bg_opa(s_dim, s_cfg.dim_pct > 0 ? (lv_opa_t)(s_cfg.dim_pct * 255 / 100) : LV_OPA_TRANSP, 0);
     lv_obj_remove_flag(s_dim, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(s_dim, s_cfg.dim_pct > 0 ? 0 : LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_background(s_dim);
+
+    s_img = lv_image_create(parent);
+    lv_obj_set_size(s_img, BG_W, BG_H);
+    lv_obj_set_pos(s_img, 0, 0);
+    lv_obj_remove_flag(s_img, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_img, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_background(s_img);       /* 图片沉到最底，暗化层在它上面 */
+
+    ESP_LOGI(TAG, "bind: dim %d%% (opa %d), image behind", s_cfg.dim_pct,
+             (int)(s_cfg.dim_pct * 255 / 100));
 
     /* 如果下载早就完成了，绑定之后立刻补显示 */
     if (s_frame_ready) {
         show_cb(NULL);
     }
+}
 
-    /* 背景层在最底，暗化层紧贴其上，卡片会自动排在后面 */
-    lv_obj_move_background(s_img);
-    if (s_dim != NULL) {
-        lv_obj_move_foreground(s_img);
-        lv_obj_move_background(s_dim);
-    }
+uint8_t bg_image_card_opa_pct(void)
+{
+    return (uint8_t)s_cfg.card_pct;
 }
 
 void bg_image_stop(void)
@@ -359,6 +368,7 @@ void bg_image_apply_json(const char *json)
     memset(&s_cfg, 0, sizeof(s_cfg));
     s_cfg.interval_s = 60;
     s_cfg.dim_pct = 35;
+    s_cfg.card_pct = 60;
 
     const cJSON *interval = cJSON_GetObjectItemCaseSensitive(bg, "interval");
     if (cJSON_IsNumber(interval) && interval->valueint >= 5) {
@@ -367,6 +377,11 @@ void bg_image_apply_json(const char *json)
     const cJSON *dim = cJSON_GetObjectItemCaseSensitive(bg, "dim");
     if (cJSON_IsNumber(dim)) {
         s_cfg.dim_pct = dim->valueint < 0 ? 0 : (dim->valueint > 80 ? 80 : dim->valueint);
+    }
+
+    const cJSON *card = cJSON_GetObjectItemCaseSensitive(bg, "card");
+    if (cJSON_IsNumber(card)) {
+        s_cfg.card_pct = card->valueint < 0 ? 0 : (card->valueint > 95 ? 95 : card->valueint);
     }
 
     const cJSON *images = cJSON_GetObjectItemCaseSensitive(bg, "images");

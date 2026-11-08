@@ -201,8 +201,9 @@ static void make_tile(lv_obj_t *parent, int page, int slot, int col, int row)
     lv_obj_t *card = lv_obj_create(parent);
     lv_obj_set_size(card, CARD_W, CARD_H);
     lv_obj_set_pos(card, GRID_LEFT + col * (CARD_W + CARD_GAP), GRID_TOP + row * (CARD_H + CARD_GAP));
-    lv_obj_set_style_bg_color(card, COLOR_CARD, 0);
-    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    /* 卡片是黑色半透明：叠在"背景图 + 暗化层"之上会更暗，形成玻璃质感 */
+    lv_obj_set_style_bg_color(card, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(card, (lv_opa_t)(bg_image_card_opa_pct() * 255 / 100), 0);
     lv_obj_set_style_radius(card, 22, 0);
     lv_obj_set_style_border_width(card, 1, 0);
     lv_obj_set_style_border_color(card, COLOR_BORDER, 0);
@@ -282,6 +283,19 @@ static void build_status_page(lv_obj_t *scr)
     lv_obj_set_style_pad_all(page, 0, 0);
     lv_obj_remove_flag(page, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(page, gesture_cb, LV_EVENT_GESTURE, NULL);
+
+    /* System 页的参数放在一张卡片里：与其他卡片同样的黑色半透明，
+       叠在背景图 + 暗化层之上，比背景更暗一些。 */
+    lv_obj_t *info_card = lv_obj_create(page);
+    lv_obj_remove_style_all(info_card);
+    lv_obj_set_pos(info_card, 32, 60);
+    lv_obj_set_size(info_card, 296, 142);
+    lv_obj_set_style_bg_color(info_card, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(info_card, (lv_opa_t)(bg_image_card_opa_pct() * 255 / 100), 0);
+    lv_obj_set_style_radius(info_card, 22, 0);
+    lv_obj_set_style_border_width(info_card, 1, 0);
+    lv_obj_set_style_border_color(info_card, COLOR_BORDER, 0);
+    lv_obj_remove_flag(info_card, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
     for (int i = 0; i < 5; i++) {
         s_sys_lines[i] = lv_label_create(page);

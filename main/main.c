@@ -17,6 +17,8 @@
 #include "esp_lcd_panel_ops.h"
 
 #include "app_settings.h"
+#include "bg_cache.h"
+#include "bg_image.h"
 #include "bsp_display.h"
 #include "bsp_lvgl.h"
 #include "bsp_touch.h"
@@ -111,6 +113,10 @@ void app_main(void)
     MEMSTEP("boot");
     ESP_ERROR_CHECK(app_settings_init());
     MEMSTEP("settings");
+
+    /* 背景/卡片默认值要在第一次建 UI 之前就位，否则首屏会闪一下透明卡片 */
+    bg_image_init();
+    bg_cache_init();
 
     esp_lcd_panel_handle_t panel = NULL;
     ESP_ERROR_CHECK(bsp_display_init(&panel, NULL, NULL));
