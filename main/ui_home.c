@@ -684,6 +684,20 @@ static void refresh_status_page(void)
 /* 刷新                                                                       */
 /* ------------------------------------------------------------------------- */
 
+/** 状态文本可能含中文（天气"晴"、模式名等）：非 ASCII 就用 CJK 字体的较小字号。 */
+static const lv_font_t *value_font_for(const char *text)
+{
+    if (text == NULL) {
+        return &lv_font_montserrat_28;
+    }
+    for (const unsigned char *p = (const unsigned char *)text; *p; p++) {
+        if (*p >= 0x80) {
+            return &lv_font_noto_18_cjk;
+        }
+    }
+    return &lv_font_montserrat_28;
+}
+
 static void refresh_values(void)
 {
     for (int p = 0; p < s_json_pages; p++) {
@@ -704,8 +718,10 @@ static void refresh_values(void)
                     char buf[64];
                     snprintf(buf, sizeof(buf), "%s %s", e->state, e->unit);
                     lv_label_set_text(w->value, buf);
+                    lv_obj_set_style_text_font(w->value, value_font_for(buf), 0);
                 } else {
                     lv_label_set_text(w->value, e->state);
+                    lv_obj_set_style_text_font(w->value, value_font_for(e->state), 0);
                 }
                 continue;
             }
@@ -721,6 +737,7 @@ static void refresh_values(void)
                 txt = e->state;
             }
             lv_label_set_text(w->value, txt);
+            lv_obj_set_style_text_font(w->value, value_font_for(txt), 0);
             lv_obj_set_style_bg_color(w->card, e->on ? COLOR_CARD_ON : COLOR_CARD, 0);
             lv_obj_set_style_text_color(w->value, e->on ? COLOR_TEXT : COLOR_MUTED, 0);
             if (w->dot) {
