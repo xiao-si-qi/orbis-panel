@@ -17,6 +17,9 @@ esp_err_t bsp_lvgl_init(esp_lcd_panel_handle_t panel);
 /** 启动 LVGL 任务（内部 5~10ms 周期调用 lv_timer_handler）。 */
 void bsp_lvgl_start(void);
 
+/** 设置屏幕方向（0/90/180/270 度），同时影响触摸坐标。 */
+void bsp_lvgl_set_rotation(int deg);
+
 #ifdef __cplusplus
 }
 #endif

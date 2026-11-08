@@ -31,6 +31,7 @@ typedef struct {
 
 typedef struct {
     char title[24];
+    int rotation;      /* 屏幕方向 0/90/180/270，来自布局 JSON 的 rotation 字段 */
     int page_count;
     layout_page_t pages[LAYOUT_MAX_PAGES];
 } layout_t;

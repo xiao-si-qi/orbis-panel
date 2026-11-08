@@ -80,6 +80,10 @@ static void network_task(void *arg)
     /* 布局只走 MQTT：NVS 里是上一次下发的，没收到过就只显示 System 页 */
     layout_t layout;
     if (layout_load_nvs(&layout) == ESP_OK) {
+        /* 开机离线时也要用配置里的方向 */
+        lv_lock();
+        bsp_lvgl_set_rotation(layout.rotation);
+        lv_unlock();
         register_layout_entities(&layout);
         ha_client_fetch_all();
         ui_home_apply(&layout);

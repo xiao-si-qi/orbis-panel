@@ -9,6 +9,8 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_app_desc.h"
+#include "esp_ota_ops.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
 
@@ -225,7 +227,7 @@ static const char *PROV_HTML_FMT =
     "<label>中文显示名（HA 里显示的名字）</label><input name='device_name' value='%s'>"
     "<label>设置页用户名（HTTP Basic Auth）</label><input name='web_user' value='%s'>"
     "<label>设置页密码</label><input name='web_pass' type='password' placeholder='留空表示不修改'>"
-    "<button type='submit'>保存并重启</button></form></body></html>";
+    "<button type='submit'>保存并重启</button></form><p><a href='/ota'>固件升级（网页 OTA）→</a></p></body></html>";
 
 static int hex2int(char c)
 {
@@ -285,6 +287,137 @@ static bool form_get(char *body, const char *key, char *out, size_t out_len)
     out[decoded] = '\0';
     free(scratch);
     return true;
+}
+
+/* ---------------- 网页 OTA ---------------- */
+
+static const char OTA_HTML_FMT[] =
+    "<!doctype html><meta charset='utf-8'>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<style>body{font-family:system-ui,sans-serif;margin:24px;max-width:560px}"
+    "button{padding:10px 16px;font-size:15px;border-radius:8px;border:1px solid #888;"
+    "background:#2563eb;color:#fff}pre{background:#111;color:#0f0;padding:10px;border-radius:8px;"
+    "white-space:pre-wrap}a{color:#2563eb}</style>"
+    "<h2>固件升级</h2>"
+    "<p>当前版本 <b>%s</b> · 分区 %s · 空闲 %d KB</p>"
+    "<input type='file' id='f' accept='.bin'><br><br>"
+    "<button id='b'>上传并升级</button>"
+    "<pre id='s'>选择 .bin 文件后点上传</pre>"
+    "<p><a href='/'>← 返回设置页</a></p>"
+    "<script>"
+    "var f=document.getElementById('f'),b=document.getElementById('b'),s=document.getElementById('s');"
+    "b.onclick=function(){var file=f.files[0];if(!file){s.textContent='先选择文件';return;}"
+    "b.disabled=true;s.textContent='上传中…';var x=new XMLHttpRequest();"
+    "x.open('POST','/api/ota');x.setRequestHeader('Content-Type','application/octet-stream');"
+    "x.upload.onprogress=function(e){s.textContent='上传 '+Math.round(e.loaded/1024)+' / '+"
+    "Math.round(e.total/1024)+' KB';};"
+    "x.onload=function(){s.textContent=x.responseText;};"
+    "x.onerror=function(){s.textContent='上传失败（连接中断）';b.disabled=false;};"
+    "x.send(file);};"
+    "</script>";
+
+static const char *ota_version_string(void)
+{
+    const esp_app_desc_t *desc = esp_app_get_description();
+    return desc ? desc->version : "?";
+}
+
+static esp_err_t ota_page_get(httpd_req_t *req)
+{
+    if (!http_auth_ok(req)) {
+        return send_401(req);
+    }
+    const esp_partition_t *run = esp_ota_get_running_partition();
+    char *page = malloc(3072);
+    if (page == NULL) {
+        return httpd_resp_send_500(req);
+    }
+    snprintf(page, 3072, OTA_HTML_FMT, ota_version_string(),
+             run ? run->label : "?", (int)(esp_get_free_heap_size() / 1024));
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    const esp_err_t err = httpd_resp_send(req, page, HTTPD_RESP_USE_STRLEN);
+    free(page);
+    return err;
+}
+
+static esp_err_t ota_upload_post(httpd_req_t *req)
+{
+    if (!http_auth_ok(req)) {
+        return send_401(req);
+    }
+    if (req->content_len <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "没有收到固件数据");
+        return ESP_FAIL;
+    }
+
+    const esp_partition_t *target = esp_ota_get_next_update_partition(NULL);
+    if (target == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "没有可用的 OTA 分区");
+        return ESP_FAIL;
+    }
+    if ((size_t)req->content_len > target->size) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "固件超过分区容量");
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "网页 OTA: 接收 %d 字节 -> %s", req->content_len, target->label);
+
+    esp_ota_handle_t handle = 0;
+    esp_err_t err = esp_ota_begin(target, OTA_WITH_SEQUENTIAL_WRITES, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_begin 失败: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "初始化 OTA 失败");
+        return ESP_FAIL;
+    }
+
+    char *buf = malloc(4096);
+    if (buf == NULL) {
+        esp_ota_abort(handle);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "内存不足");
+        return ESP_FAIL;
+    }
+
+    int remaining = req->content_len;
+    while (remaining > 0) {
+        const int chunk = remaining < 4096 ? remaining : 4096;
+        const int got = httpd_req_recv(req, buf, chunk);
+        if (got == HTTPD_SOCK_ERR_TIMEOUT) {
+            continue;
+        }
+        if (got <= 0) {
+            ESP_LOGE(TAG, "接收中断，剩余 %d 字节", remaining);
+            free(buf);
+            esp_ota_abort(handle);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "传输中断");
+            return ESP_FAIL;
+        }
+        if (esp_ota_write(handle, buf, (size_t)got) != ESP_OK) {
+            free(buf);
+            esp_ota_abort(handle);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "写 flash 失败");
+            return ESP_FAIL;
+        }
+        remaining -= got;
+    }
+    free(buf);
+
+    err = esp_ota_end(handle);
+    if (err != ESP_OK) {
+        /* 镜像不合法（不是本芯片的固件、CRC 错），原固件仍可启动 */
+        ESP_LOGE(TAG, "固件校验失败: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "固件校验失败，可能不是本设备的固件");
+        return ESP_FAIL;
+    }
+    if (esp_ota_set_boot_partition(target) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "设置启动分区失败");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "网页 OTA 完成，1.5 秒后重启");
+    httpd_resp_set_type(req, "text/plain; charset=utf-8");
+    httpd_resp_sendstr(req, "升级成功，正在重启…");
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    esp_restart();
+    return ESP_OK;
 }
 
 static esp_err_t prov_root_get(httpd_req_t *req)
@@ -390,14 +523,18 @@ esp_err_t wifi_manager_web_start(void)
         httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     /* 配置页 handler 里有 1KB 请求体 + 十余个配置缓冲，默认栈不够（曾导致
        "stack overflow in task httpd" 直接重启）。 */
-    cfg.stack_size = 8192;
+    cfg.stack_size = 10240;
         cfg.lru_purge_enable = true;
         ESP_RETURN_ON_ERROR(httpd_start(&s_httpd, &cfg), TAG, "httpd start failed");
 
         httpd_uri_t root = {.uri = "/", .method = HTTP_GET, .handler = prov_root_get};
         httpd_uri_t save = {.uri = "/save", .method = HTTP_POST, .handler = prov_save_post};
+        httpd_uri_t ota_page = {.uri = "/ota", .method = HTTP_GET, .handler = ota_page_get};
+        httpd_uri_t ota_post = {.uri = "/api/ota", .method = HTTP_POST, .handler = ota_upload_post};
         httpd_register_uri_handler(s_httpd, &root);
         httpd_register_uri_handler(s_httpd, &save);
+        httpd_register_uri_handler(s_httpd, &ota_page);
+        httpd_register_uri_handler(s_httpd, &ota_post);
     }
     ESP_LOGI(TAG, "settings page: http://<device-ip>/");
     return ESP_OK;
@@ -418,14 +555,18 @@ esp_err_t wifi_manager_start_provisioning(void)
         httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     /* 配置页 handler 里有 1KB 请求体 + 十余个配置缓冲，默认栈不够（曾导致
        "stack overflow in task httpd" 直接重启）。 */
-    cfg.stack_size = 8192;
+    cfg.stack_size = 10240;
         cfg.lru_purge_enable = true;
         ESP_RETURN_ON_ERROR(httpd_start(&s_httpd, &cfg), TAG, "httpd start failed");
 
         httpd_uri_t root = {.uri = "/", .method = HTTP_GET, .handler = prov_root_get};
         httpd_uri_t save = {.uri = "/save", .method = HTTP_POST, .handler = prov_save_post};
+        httpd_uri_t ota_page = {.uri = "/ota", .method = HTTP_GET, .handler = ota_page_get};
+        httpd_uri_t ota_post = {.uri = "/api/ota", .method = HTTP_POST, .handler = ota_upload_post};
         httpd_register_uri_handler(s_httpd, &root);
         httpd_register_uri_handler(s_httpd, &save);
+        httpd_register_uri_handler(s_httpd, &ota_page);
+        httpd_register_uri_handler(s_httpd, &ota_post);
     }
 
     ESP_LOGW(TAG, "provisioning AP '%s' up, open http://192.168.4.1", PROV_AP_SSID);

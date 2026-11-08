@@ -119,6 +119,24 @@ static void lvgl_task(void *arg)
     }
 }
 
+/** 屏幕方向：0 / 90 / 180 / 270 度。LVGL 会同时旋转画面和触摸坐标。 */
+void bsp_lvgl_set_rotation(int deg)
+{
+    if (s_disp == NULL) {
+        return;
+    }
+    lv_display_rotation_t rot = LV_DISPLAY_ROTATION_0;
+    if (deg == 90) {
+        rot = LV_DISPLAY_ROTATION_90;
+    } else if (deg == 180) {
+        rot = LV_DISPLAY_ROTATION_180;
+    } else if (deg == 270) {
+        rot = LV_DISPLAY_ROTATION_270;
+    }
+    lv_display_set_rotation(s_disp, rot);
+    ESP_LOGI(TAG, "屏幕方向设置为 %d 度", deg);
+}
+
 void bsp_lvgl_start(void)
 {
     xTaskCreatePinnedToCore(lvgl_task, "lvgl", 8192, NULL, 5, NULL, 1);

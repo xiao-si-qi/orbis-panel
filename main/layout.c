@@ -87,6 +87,14 @@ esp_err_t layout_parse(const char *json, layout_t *out)
         copy_str(out->title, sizeof(out->title), title);
     }
 
+    const cJSON *jrot = cJSON_GetObjectItemCaseSensitive(root, "rotation");
+    if (cJSON_IsNumber(jrot)) {
+        int deg = jrot->valueint;
+        if (deg == 0 || deg == 90 || deg == 180 || deg == 270) {
+            out->rotation = deg;
+        }
+    }
+
     const cJSON *pages = cJSON_GetObjectItemCaseSensitive(root, "pages");
     if (!cJSON_IsArray(pages)) {
         ESP_LOGE(TAG, "layout has no pages[]");

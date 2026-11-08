@@ -22,6 +22,7 @@
 #include "nvs.h"
 
 #include "app_settings.h"
+#include "bsp_lvgl.h"
 #include "bg_image.h"
 #include "bsp_display.h"
 #include "ha_client.h"
@@ -57,6 +58,10 @@ static uint32_t load_seq(void)
     if (nvs_open("app", NVS_READONLY, &h) == ESP_OK) {
         nvs_get_u32(h, SEQ_KEY, &v);
         nvs_close(h);
+    }
+    /* 0xFFFFFFFF 是"未初始化"的哨兵值：如果当成真实 seq，之后所有命令都会被判重复 */
+    if (v == 0xFFFFFFFFu) {
+        v = 0;
     }
     return v;
 }
@@ -127,7 +132,7 @@ void mqtt_link_publish_meta(void)
     const app_settings_t *cfg = app_settings_get();
     const char *display = (cfg->device_name[0] != '\0') ? cfg->device_name : "圆屏";
     snprintf(json, sizeof(json),
-             "{\"type\":\"screen\",\"caps\":[\"fw\",\"rssi\",\"uptime\",\"online\",\"layout\",\"ota\",\"reboot\",\"brightness\",\"log\",\"background\"],"
+             "{\"type\":\"screen\",\"caps\":[\"fw\",\"rssi\",\"uptime\",\"online\",\"layout\",\"ota\",\"reboot\",\"brightness\",\"log\",\"background\",\"rotation\"],"
              "\"display\":{\"w\":%d,\"h\":%d,\"formats\":[\"jpeg\"],\"fit\":[\"cover\",\"contain\"]},\"fw\":\"%s\","
              "\"name\":\"%s\",\"model\":\"JC3636W518\"}",
              360, 360, ota_current_version(), display);
@@ -169,7 +174,10 @@ static void apply_layout_json(const char *json)
             ha_client_register(tile->entity, tile->label[0] ? tile->label : NULL);
         }
     }
+    lv_lock();
+    bsp_lvgl_set_rotation(layout->rotation);
     ui_home_apply(layout);
+    lv_unlock();
     bg_image_apply_json(json);      /* 背景图/轮播 */
     free(layout);
     mqtt_link_publish_event("{\"ev\":\"cfg_applied\"}");
@@ -188,7 +196,7 @@ static void handle_cmd(const char *payload)
     const uint32_t seq = cJSON_IsNumber(jseq) ? (uint32_t)jseq->valuedouble : 0;
     const char *cmd = cJSON_IsString(jcmd) ? jcmd->valuestring : NULL;
 
-    if (seq != 0 && seq <= s_last_seq) {
+    if (seq != 0 && seq != 0xFFFFFFFFu && seq <= s_last_seq) {
         ESP_LOGI(TAG, "cmd seq %u already executed (last %u)", seq, s_last_seq);
         cJSON_Delete(root);
         return;
