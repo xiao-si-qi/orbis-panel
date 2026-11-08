@@ -1733,6 +1733,8 @@ static void build_climate_view(lv_obj_t *scr)
     lv_obj_align(s_clim_modes_row, LV_ALIGN_TOP_MID, 0, 190);
     lv_obj_set_flex_flow(s_clim_modes_row, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_style_pad_gap(s_clim_modes_row, 6, 0);
+    lv_obj_set_flex_align(s_clim_modes_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(s_clim_modes_row, 6, 0);
 
     s_clim_fans_row = lv_obj_create(s_clim_page);
     lv_obj_remove_style_all(s_clim_fans_row);
@@ -1740,6 +1742,8 @@ static void build_climate_view(lv_obj_t *scr)
     lv_obj_align(s_clim_fans_row, LV_ALIGN_TOP_MID, 0, 262);
     lv_obj_set_flex_flow(s_clim_fans_row, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_style_pad_gap(s_clim_fans_row, 6, 0);
+    lv_obj_set_flex_align(s_clim_fans_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(s_clim_fans_row, 6, 0);
 }
 
 void ui_home_open_climate(const char *entity_id)
