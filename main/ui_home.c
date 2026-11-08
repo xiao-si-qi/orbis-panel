@@ -1671,6 +1671,7 @@ static void clim_slider_cb(lv_event_t *e)
     xQueueSend(s_cmd_q, &cmd, 0);
     char buf[24];
     snprintf(buf, sizeof(buf), "目标 %d°", v);
+    lv_obj_set_style_text_font(s_clim_temp, &lv_font_noto_18_cjk, 0);
     lv_label_set_text(s_clim_temp, buf);
 }
 
@@ -1709,7 +1710,7 @@ static void build_climate_view(lv_obj_t *scr)
 
     s_clim_temp = lv_label_create(s_clim_page);
     lv_label_set_text(s_clim_temp, "--");
-    lv_obj_set_style_text_font(s_clim_temp, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_font(s_clim_temp, &lv_font_noto_18_cjk, 0);   /* 含中文，不能用西文字体 */
     lv_obj_set_style_text_color(s_clim_temp, COLOR_TEXT, 0);
     lv_obj_align(s_clim_temp, LV_ALIGN_TOP_MID, 0, 84);
 
