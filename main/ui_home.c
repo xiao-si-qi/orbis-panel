@@ -84,6 +84,7 @@ static lv_obj_t *s_ota_bar;
 static lv_obj_t *s_ota_status;
 
 static int s_page;
+static bool s_press_on_slider;   /* 本次按压是否落在滑条上 */
 
 /* ---- 灯 / 传感器 的子页面 ---- */
 static lv_obj_t *s_detail;                       /* 全屏子页容器 */
@@ -305,12 +306,19 @@ static void swipe_cb(lv_event_t *e)
     if (code == LV_EVENT_PRESSED) {
         start = p;
         pressed = true;
+        /* 记下起手点是否落在滑条上（拖滑条不能被当成滑动） */
+        lv_obj_t *target = lv_event_get_target(e);
+        s_press_on_slider = (target != NULL && lv_obj_check_type(target, &lv_slider_class));
         return;
     }
     if (code != LV_EVENT_RELEASED || !pressed) {
         return;
     }
     pressed = false;
+    if (s_press_on_slider) {
+        s_press_on_slider = false;
+        return;                 /* 这一下是在滑条上，不算翻页/返回 */
+    }
 
     const int dx = p.x - start.x;
     const int dy = p.y - start.y;
@@ -320,8 +328,9 @@ static void swipe_cb(lv_event_t *e)
         return;
     }
     if (ui_home_detail_open()) {
-        if (dx > 40) {
-            ui_home_close_detail();      /* 子页里右滑 = 返回 */
+        /* 只有从屏幕左边缘起手的右滑才当"返回"，否则拖滑条会被误判 */
+        if (dx > 40 && start.x < 70) {
+            ui_home_close_detail();
         }
         return;
     }
@@ -820,8 +829,8 @@ static void build_detail_view(lv_obj_t *scr)
     lv_obj_add_flag(s_detail, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t *back = lv_button_create(s_detail);
-    lv_obj_set_size(back, 44, 44);
-    lv_obj_set_pos(back, 18, 18);
+    lv_obj_set_size(back, 40, 40);
+    lv_obj_align(back, LV_ALIGN_TOP_MID, 0, 16);   /* 顶部中间：圆屏这里才看得见 */
     lv_obj_set_style_bg_opa(back, LV_OPA_20, 0);
     lv_obj_set_style_radius(back, LV_RADIUS_CIRCLE, 0);
     lv_obj_add_event_cb(back, detail_back_cb, LV_EVENT_CLICKED, NULL);
@@ -833,18 +842,18 @@ static void build_detail_view(lv_obj_t *scr)
     lv_label_set_text(s_detail_title, "--");
     lv_obj_set_style_text_font(s_detail_title, &lv_font_noto_18_cjk, 0);
     lv_obj_set_style_text_color(s_detail_title, COLOR_TEXT, 0);
-    lv_obj_align(s_detail_title, LV_ALIGN_TOP_MID, 0, 26);
+    lv_obj_align(s_detail_title, LV_ALIGN_TOP_MID, 0, 66);
 
     s_detail_state = lv_label_create(s_detail);
     lv_label_set_text(s_detail_state, "");
     lv_obj_set_style_text_font(s_detail_state, &lv_font_noto_18_cjk, 0);
     lv_obj_set_style_text_color(s_detail_state, COLOR_MUTED, 0);
-    lv_obj_align(s_detail_state, LV_ALIGN_TOP_MID, 0, 54);
+    lv_obj_align(s_detail_state, LV_ALIGN_TOP_MID, 0, 96);
 
     /* 开关按钮 */
     s_detail_power_btn = lv_button_create(s_detail);
     lv_obj_set_size(s_detail_power_btn, 160, 52);
-    lv_obj_align(s_detail_power_btn, LV_ALIGN_TOP_MID, 0, 92);
+    lv_obj_align(s_detail_power_btn, LV_ALIGN_TOP_MID, 0, 128);
     lv_obj_set_style_radius(s_detail_power_btn, 18, 0);
     lv_obj_set_style_bg_color(s_detail_power_btn, COLOR_ACCENT, 0);
     lv_obj_add_event_cb(s_detail_power_btn, detail_power_cb, LV_EVENT_CLICKED, NULL);
@@ -857,7 +866,7 @@ static void build_detail_view(lv_obj_t *scr)
     s_detail_br_row = lv_obj_create(s_detail);
     lv_obj_remove_style_all(s_detail_br_row);
     lv_obj_set_size(s_detail_br_row, 300, 70);
-    lv_obj_align(s_detail_br_row, LV_ALIGN_TOP_MID, 0, 168);
+    lv_obj_align(s_detail_br_row, LV_ALIGN_TOP_MID, 0, 192);
     lv_obj_t *br_lab = lv_label_create(s_detail_br_row);
     lv_label_set_text(br_lab, "亮度");
     lv_obj_set_style_text_font(br_lab, &lv_font_noto_18_cjk, 0);
@@ -871,6 +880,7 @@ static void build_detail_view(lv_obj_t *scr)
 
     s_detail_br_slider = lv_slider_create(s_detail_br_row);
     lv_obj_set_width(s_detail_br_slider, 300);
+    lv_obj_set_height(s_detail_br_slider, 12);
     lv_slider_set_range(s_detail_br_slider, 1, 100);
     lv_obj_align(s_detail_br_slider, LV_ALIGN_TOP_MID, 0, 30);
     lv_obj_add_event_cb(s_detail_br_slider, detail_slider_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
@@ -879,8 +889,8 @@ static void build_detail_view(lv_obj_t *scr)
     /* 色温 */
     s_detail_ct_row = lv_obj_create(s_detail);
     lv_obj_remove_style_all(s_detail_ct_row);
-    lv_obj_set_size(s_detail_ct_row, 300, 70);
-    lv_obj_align(s_detail_ct_row, LV_ALIGN_TOP_MID, 0, 250);
+    lv_obj_set_size(s_detail_ct_row, 268, 62);
+    lv_obj_align(s_detail_ct_row, LV_ALIGN_TOP_MID, 0, 266);
     lv_obj_t *ct_lab = lv_label_create(s_detail_ct_row);
     lv_label_set_text(ct_lab, "色温");
     lv_obj_set_style_text_font(ct_lab, &lv_font_noto_18_cjk, 0);
@@ -893,7 +903,8 @@ static void build_detail_view(lv_obj_t *scr)
     lv_obj_align(s_detail_ct_value, LV_ALIGN_TOP_RIGHT, 0, 0);
 
     s_detail_ct_slider = lv_slider_create(s_detail_ct_row);
-    lv_obj_set_width(s_detail_ct_slider, 300);
+    lv_obj_set_width(s_detail_ct_slider, 260);
+    lv_obj_set_height(s_detail_ct_slider, 12);
     lv_slider_set_range(s_detail_ct_slider, 2700, 6500);
     lv_obj_align(s_detail_ct_slider, LV_ALIGN_TOP_MID, 0, 30);
     lv_obj_add_event_cb(s_detail_ct_slider, detail_slider_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
