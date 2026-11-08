@@ -1342,19 +1342,19 @@ static void build_chart_view(lv_obj_t *scr)
 
     s_chart_min = lv_label_create(s_chart_page);
     lv_label_set_text(s_chart_min, "");
-    lv_obj_set_style_text_font(s_chart_min, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(s_chart_min, &lv_font_noto_18_cjk, 0);
     lv_obj_set_style_text_color(s_chart_min, COLOR_MUTED, 0);
     lv_obj_align(s_chart_min, LV_ALIGN_TOP_MID, -100, 268);
 
     s_chart_avg = lv_label_create(s_chart_page);
     lv_label_set_text(s_chart_avg, "");
-    lv_obj_set_style_text_font(s_chart_avg, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(s_chart_avg, &lv_font_noto_18_cjk, 0);
     lv_obj_set_style_text_color(s_chart_avg, COLOR_TEXT, 0);
     lv_obj_align(s_chart_avg, LV_ALIGN_TOP_MID, 0, 268);
 
     s_chart_max = lv_label_create(s_chart_page);
     lv_label_set_text(s_chart_max, "");
-    lv_obj_set_style_text_font(s_chart_max, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(s_chart_max, &lv_font_noto_18_cjk, 0);
     lv_obj_set_style_text_color(s_chart_max, COLOR_MUTED, 0);
     lv_obj_align(s_chart_max, LV_ALIGN_TOP_MID, 100, 268);
 }
