@@ -948,12 +948,12 @@ static void build_detail_view(lv_obj_t *scr)
     lv_label_set_text(s_detail_title, "--");
     lv_obj_set_style_text_font(s_detail_title, &lv_font_noto_18_cjk, 0);
     lv_obj_set_style_text_color(s_detail_title, COLOR_TEXT, 0);
-    lv_obj_align(s_detail_title, LV_ALIGN_TOP_MID, 0, 66);
+    lv_obj_align(s_detail_title, LV_ALIGN_TOP_MID, 0, 54);
 
     /* 开关：lv_switch（开=白色轨道+黑滑块，关=深色轨道+白滑块） */
     s_detail_power_sw = lv_switch_create(s_detail);
     lv_obj_set_size(s_detail_power_sw, 96, 46);
-    lv_obj_align(s_detail_power_sw, LV_ALIGN_TOP_MID, 0, 128);
+    lv_obj_align(s_detail_power_sw, LV_ALIGN_TOP_MID, 0, 92);
     lv_obj_set_style_radius(s_detail_power_sw, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_bg_color(s_detail_power_sw, lv_color_hex(0x151517), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_detail_power_sw, LV_OPA_COVER, LV_PART_MAIN);
@@ -966,7 +966,7 @@ static void build_detail_view(lv_obj_t *scr)
     s_detail_br_row = lv_obj_create(s_detail);
     lv_obj_remove_style_all(s_detail_br_row);
     lv_obj_set_size(s_detail_br_row, 300, 70);
-    lv_obj_align(s_detail_br_row, LV_ALIGN_TOP_MID, 0, 192);
+    lv_obj_align(s_detail_br_row, LV_ALIGN_TOP_MID, 0, 152);
     lv_obj_t *br_lab = lv_label_create(s_detail_br_row);
     lv_label_set_text(br_lab, "亮度");
     lv_obj_set_style_text_font(br_lab, &lv_font_noto_18_cjk, 0);
@@ -989,8 +989,8 @@ static void build_detail_view(lv_obj_t *scr)
     /* 色温 */
     s_detail_ct_row = lv_obj_create(s_detail);
     lv_obj_remove_style_all(s_detail_ct_row);
-    lv_obj_set_size(s_detail_ct_row, 268, 62);
-    lv_obj_align(s_detail_ct_row, LV_ALIGN_TOP_MID, 0, 266);
+    lv_obj_set_size(s_detail_ct_row, 208, 62);
+    lv_obj_align(s_detail_ct_row, LV_ALIGN_TOP_MID, 0, 226);
     lv_obj_t *ct_lab = lv_label_create(s_detail_ct_row);
     lv_label_set_text(ct_lab, "色温");
     lv_obj_set_style_text_font(ct_lab, &lv_font_noto_18_cjk, 0);
@@ -1003,7 +1003,7 @@ static void build_detail_view(lv_obj_t *scr)
     lv_obj_align(s_detail_ct_value, LV_ALIGN_TOP_RIGHT, 0, 0);
 
     s_detail_ct_slider = lv_slider_create(s_detail_ct_row);
-    lv_obj_set_width(s_detail_ct_slider, 260);
+    lv_obj_set_width(s_detail_ct_slider, 200);
     lv_obj_set_height(s_detail_ct_slider, 12);
     lv_slider_set_range(s_detail_ct_slider, 2700, 6500);
     lv_obj_align(s_detail_ct_slider, LV_ALIGN_TOP_MID, 0, 30);
