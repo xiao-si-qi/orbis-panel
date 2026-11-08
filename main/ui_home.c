@@ -141,6 +141,35 @@ static void anim_done_cb(lv_anim_t *a)
     s_animating = false;
 }
 
+/** 直接把所有页的可见性/位置/圆点/标题刷成"只有 s_page 可见"。构建首帧用。 */
+static void pages_apply_visibility(void)
+{
+    for (int i = 0; i < s_page_count; i++) {
+        lv_obj_set_x(s_pages[i], 0);
+        if (i == s_page) {
+            lv_obj_remove_flag(s_pages[i], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_pages[i], LV_OBJ_FLAG_HIDDEN);
+        }
+        if (s_dots[i]) {
+            lv_obj_set_style_bg_color(s_dots[i], (i == s_page) ? COLOR_TEXT : lv_color_hex(0x3A3A3C), 0);
+        }
+    }
+    if (s_title) {
+        const char *title = page_title(s_page);
+        lv_label_set_text(s_title, title);
+        lv_obj_set_style_text_font(s_title, title_font_for(title), 0);
+        lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 18);
+    }
+    int visible = 0;
+    for (int i = 0; i < s_page_count; i++) {
+        if (!lv_obj_has_flag(s_pages[i], LV_OBJ_FLAG_HIDDEN)) {
+            visible++;
+        }
+    }
+    ESP_LOGI(TAG, "showing page %d/%d (visible=%d)", s_page, s_page_count, visible);
+}
+
 /** 切换页面：dir > 0 表示"下一页"（新页从右侧滑入），< 0 反之。 */
 static void show_page_dir(int page, int dir)
 {
@@ -722,6 +751,16 @@ static void build_ui(void)
     lv_obj_add_event_cb(scr, gesture_cb, LV_EVENT_GESTURE, NULL);
     lv_obj_add_event_cb(scr, swipe_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(scr, swipe_cb, LV_EVENT_RELEASED, NULL);
+
+    /* 首帧：页码夹紧后只显示当前页（否则所有页叠在一起） */
+    if (s_page >= s_page_count) {
+        s_page = 0;
+    }
+    if (s_page < 0) {
+        s_page = 0;
+    }
+    pages_apply_visibility();
+    s_animating = false;
     ESP_LOGI(TAG, "UI built: %d page(s) + system", s_json_pages);
 
     ui_enable_gesture_bubble(scr);   /* 左右滑动翻页 */
