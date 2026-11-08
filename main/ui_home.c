@@ -798,8 +798,12 @@ static void detail_update_ambience(void)
     }
     const lv_color_t c = kelvin_to_color(k);
 
-    /* 整个页面的底色就是这只灯：色温决定颜色，亮度决定明暗（下限 4% 免得全黑看不出） */
-    int pct_eff = pct < 4 ? 4 : pct;
+    /* 整个页面的底色就是这只灯：色温决定颜色，亮度决定明暗。
+       视觉下限抬到 50%：滑条最小时页面大致相当于现在 50% 的亮度，最高才是纯白。 */
+    int pct_eff = 50 + (pct / 2);
+    if (pct_eff > 100) {
+        pct_eff = 100;
+    }
     const lv_color_t bg = lv_color_make(
         (uint8_t)(c.red * pct_eff / 100),
         (uint8_t)(c.green * pct_eff / 100),
