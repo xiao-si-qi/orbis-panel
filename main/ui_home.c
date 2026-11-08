@@ -524,7 +524,8 @@ static void make_tile(lv_obj_t *parent, int page, int slot, int col, int row)
 
     lv_obj_t *card = lv_obj_create(parent);
     lv_obj_set_size(card, CARD_W, CARD_H);
-    lv_obj_set_pos(card, GRID_LEFT + col * (CARD_W + CARD_GAP), GRID_TOP + row * (CARD_H + CARD_GAP));
+    /* 坐标相对滚动容器：左右各留 22px，行距 = 卡片高 + 间隙 */
+    lv_obj_set_pos(card, 22 + col * (CARD_W + CARD_GAP), row * (CARD_H + CARD_GAP));
     /* 卡片是黑色半透明：叠在"背景图 + 暗化层"之上会更暗，形成玻璃质感 */
     lv_obj_set_style_bg_color(card, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(card, (lv_opa_t)(bg_image_card_opa_pct() * 255 / 100), 0);
@@ -1900,8 +1901,21 @@ static void build_ui(void)
 
         const int n = s_layout.pages[p].tile_count;
         s_page_tiles[p] = n;
+
+        /* 卡片放进一个可纵向滚动的容器：超过 4 个时上下滑 */
+        lv_obj_t *grid = lv_obj_create(page);
+        lv_obj_remove_style_all(grid);
+        lv_obj_set_size(grid, 336, 244);            /* 84 .. 328 */
+        lv_obj_set_pos(grid, 12, GRID_TOP);
+        lv_obj_set_style_bg_opa(grid, LV_OPA_TRANSP, 0);
+        lv_obj_add_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_scroll_dir(grid, LV_DIR_VER);
+        lv_obj_set_scrollbar_mode(grid, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_set_style_pad_all(grid, 0, 0);
+
         for (int i = 0; i < n; i++) {
-            make_tile(page, p, i, i % 2, i / 2);
+            /* 两列，行距 CARD_H + GAP；坐标相对滚动容器 */
+            make_tile(grid, p, i, i % 2, i / 2);
         }
     }
 

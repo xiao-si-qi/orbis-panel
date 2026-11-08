@@ -9,7 +9,7 @@ extern "C" {
 #endif
 
 #define LAYOUT_MAX_PAGES      6
-#define LAYOUT_TILES_PER_PAGE 4
+#define LAYOUT_TILES_PER_PAGE 12
 
 typedef enum {
     TILE_TOGGLE = 0, /* 点一下 = toggle */
