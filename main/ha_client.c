@@ -246,6 +246,76 @@ static bool json_int_in(const char *start, const char *end, const char *key, int
     return true;
 }
 
+/** 找 "key": 1.23（浮点） */
+static bool json_float_in(const char *start, const char *end, const char *key, float *out)
+{
+    if (start == NULL) {
+        return false;
+    }
+    if (end == NULL) {
+        end = start + strlen(start);
+    }
+    char pattern[40];
+    snprintf(pattern, sizeof(pattern), "\"%s\":", key);
+    const char *p = strstr(start, pattern);
+    if (p == NULL || p >= end) {
+        return false;
+    }
+    p += strlen(pattern);
+    while (p < end && (*p == ' ' || *p == '\t')) {
+        p++;
+    }
+    char *endp = NULL;
+    const double v = strtod(p, &endp);
+    if (endp == p) {
+        return false;
+    }
+    *out = (float)v;
+    return true;
+}
+
+/** 找 "key": ["a","b",...]，拼成逗号分隔串 */
+static bool json_str_array_in(const char *start, const char *end, const char *key,
+                              char *out, size_t out_len)
+{
+    if (start == NULL || out_len < 2) {
+        return false;
+    }
+    if (end == NULL) {
+        end = start + strlen(start);
+    }
+    char pattern[40];
+    snprintf(pattern, sizeof(pattern), "\"%s\":[", key);
+    const char *p = strstr(start, pattern);
+    if (p == NULL || p >= end) {
+        return false;
+    }
+    p += strlen(pattern);
+    out[0] = '\0';
+    size_t used = 0;
+    while (p < end && *p != ']') {
+        if (*p == '"') {
+            const char *q = strchr(p + 1, '"');
+            if (q == NULL || q >= end) {
+                break;
+            }
+            const size_t n = (size_t)(q - p - 1);
+            if (used + n + 2 < out_len) {
+                if (used > 0) {
+                    out[used++] = ',';
+                }
+                memcpy(out + used, p + 1, n);
+                used += n;
+                out[used] = '\0';
+            }
+            p = q + 1;
+        } else {
+            p++;
+        }
+    }
+    return out[0] != '\0';
+}
+
 static bool json_str_in(const char *start, const char *end, const char *key, char *out, size_t out_len)
 {
     if (start == NULL) {
@@ -421,6 +491,31 @@ static void parse_entity_object(ha_entity_t *e, const char *obj_start, const cha
     }
     if (e->max_k == 0) {
         e->max_k = 6500;
+    }
+
+    /* 空调 */
+    if (strncmp(e->entity_id, "climate.", 8) == 0) {
+        float fv = 0;
+        if (json_float_in(obj_start, obj_end, "current_temperature", &fv)) {
+            e->cur_temp = fv;
+        }
+        if (json_float_in(obj_start, obj_end, "temperature", &fv)) {
+            e->target_temp = fv;
+        }
+        if (json_float_in(obj_start, obj_end, "min_temp", &fv)) {
+            e->min_temp = fv;
+        }
+        if (json_float_in(obj_start, obj_end, "max_temp", &fv)) {
+            e->max_temp = fv;
+        }
+        if (e->min_temp < 5.0f) {
+            e->min_temp = 16.0f;
+        }
+        if (e->max_temp < 10.0f) {
+            e->max_temp = 30.0f;
+        }
+        json_str_array_in(obj_start, obj_end, "hvac_modes", e->hvac_modes, sizeof(e->hvac_modes));
+        json_str_array_in(obj_start, obj_end, "fan_modes", e->fan_modes, sizeof(e->fan_modes));
     }
 }
 

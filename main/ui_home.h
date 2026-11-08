@@ -31,6 +31,15 @@ void ui_home_close_chart(void);
 /** 折线图是否打开。 */
 bool ui_home_chart_open(void);
 
+/** 打开空调页（温度/模式/风速）。 */
+void ui_home_open_climate(const char *entity_id);
+
+/** 关闭空调页。 */
+void ui_home_close_climate(void);
+
+/** 空调页是否打开。 */
+bool ui_home_climate_open(void);
+
 #ifdef __cplusplus
 }
 #endif

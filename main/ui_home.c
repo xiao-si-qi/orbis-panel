@@ -114,6 +114,17 @@ static lv_obj_t *s_chart_max;
 static lv_obj_t *s_chart_avg;
 static lv_obj_t *s_chart_back_label;
 static bool s_chart_visible;
+
+/* ---- 空调页 ---- */
+static lv_obj_t *s_clim_page;
+static lv_obj_t *s_clim_title;
+static lv_obj_t *s_clim_temp;     /* 当前/目标大号文字 */
+static lv_obj_t *s_clim_span;     /* 当前模式说明 */
+static lv_obj_t *s_clim_slider;
+static lv_obj_t *s_clim_modes_row;
+static lv_obj_t *s_clim_fans_row;
+static bool s_clim_visible;
+static char s_clim_entity[96];
 static volatile bool s_chart_wanted;
 static volatile int s_chart_gen;
 static char s_chart_entity[96];
@@ -141,8 +152,8 @@ static QueueHandle_t s_cmd_q;
 
 typedef struct {
     char entity[96];
-    char service[12];
-    char attrs[64];      /* 非空则带参数调用（亮度/色温） */
+    char service[24];
+    char attrs[64];      /* 非空则带参数调用（亮度/色温/空调） */
     int gen;             /* 折线图请求代际：过期结果直接丢掉 */
 } cmd_t;
 
@@ -359,6 +370,12 @@ static void swipe_cb(lv_event_t *e)
     if (abs(dx) < 40 || abs(dx) < abs(dy)) {
         return;
     }
+    if (ui_home_climate_open()) {
+        if (dx > 40 && start.x < 70) {
+            ui_home_close_climate();
+        }
+        return;
+    }
     if (ui_home_chart_open()) {
         if (dx > 40 && start.x < 70) {
             ui_home_close_chart();
@@ -477,6 +494,12 @@ static void tile_clicked_cb(lv_event_t *e)
         return;
     }
 
+    /* 空调：点开专属页（温度/模式/风速） */
+    if (strncmp(w->entity, "climate.", 8) == 0) {
+        ui_home_open_climate(w->entity);
+        return;
+    }
+
     /* 灯：点开详情页（亮度/色温）；其它实体保持直接动作 */
     if (strncmp(w->entity, "light.", 6) == 0) {
         ui_home_open_detail(w->entity);
@@ -548,7 +571,7 @@ static void make_tile(lv_obj_t *parent, int page, int slot, int col, int row)
     w->value = value;
 }
 
-/** 信号格数：四根竖条，点亮的条数表示强度（和手机信号格一样）。 */
+/** WiFi 图标：三道弧 + 一个点，点亮的弧数量表示信号格数（1~3 格）。 */
 static void wifi_icon_draw_cb(lv_event_t *e)
 {
     lv_obj_t *obj = lv_event_get_target(e);
@@ -559,29 +582,35 @@ static void wifi_icon_draw_cb(lv_event_t *e)
     lv_area_t a;
     lv_obj_get_coords(obj, &a);
 
-    const int bars = 4;
-    const int bar_w = 4;
-    const int gap = 3;
-    const int heights[4] = {7, 10, 13, 16};
-    const int total_w = bars * bar_w + (bars - 1) * gap;
-    const int x0 = (a.x1 + a.x2) / 2 - total_w / 2;
-    const int y_bottom = a.y2 - 1;
+    const int radii[3] = {9, 6, 3};      /* 外 -> 内 */
+    const int cx = (a.x1 + a.x2) / 2;
+    const int cy = a.y2 - 2;
 
-    for (int i = 0; i < bars; i++) {
-        lv_draw_rect_dsc_t rd;
-        lv_draw_rect_dsc_init(&rd);
-        rd.radius = 1;
-        const bool lit = (i < s_wifi_level);
-        rd.bg_color = lit ? s_wifi_color : lv_color_hex(0x3A3A3C);
-        rd.bg_opa = LV_OPA_COVER;
+    for (int i = 0; i < 3; i++) {
+        /* 外弧对应第 1 格：level>=1 时点亮最外圈，依此类推 */
+        const int need = 3 - i;          /* 外弧需要 3 格中的最高档 */
+        const bool lit = (s_wifi_level >= need) && (s_wifi_level > 0);
 
-        lv_area_t bar;
-        bar.x1 = x0 + i * (bar_w + gap);
-        bar.x2 = bar.x1 + bar_w - 1;
-        bar.y2 = y_bottom;
-        bar.y1 = y_bottom - heights[i] + 1;
-        lv_draw_rect(layer, &rd, &bar);
+        lv_draw_arc_dsc_t d;
+        lv_draw_arc_dsc_init(&d);
+        d.color = lit ? s_wifi_color : lv_color_hex(0x3A3A3C);
+        d.width = 2;
+        d.rounded = 1;
+        d.start_angle = 205;
+        d.end_angle = 335;
+        d.center.x = cx;
+        d.center.y = cy;
+        d.radius = radii[i];
+        lv_draw_arc(layer, &d);
     }
+
+    lv_draw_rect_dsc_t rd;
+    lv_draw_rect_dsc_init(&rd);
+    rd.bg_color = s_wifi_level > 0 ? s_wifi_color : lv_color_hex(0x3A3A3C);
+    rd.bg_opa = LV_OPA_COVER;
+    rd.radius = 1;
+    lv_area_t dot = {cx - 1, cy - 1, cx + 1, cy + 1};
+    lv_draw_rect(layer, &rd, &dot);
 }
 
 static lv_obj_t *make_status_dot(lv_obj_t *parent, int x, int y)
@@ -805,12 +834,10 @@ static void refresh_timer_cb(lv_timer_t *t)
         }
         /* 信号格数：-55 以上 4 格，往下每档减一格 */
         if (!wifi_manager_is_connected()) {
-            s_wifi_level = 0;
-        } else if (rssi >= -55) {
-            s_wifi_level = 4;
-        } else if (rssi >= -67) {
-            s_wifi_level = 3;
-        } else if (rssi >= -78) {
+            s_wifi_level = 0;            /* 断开：全暗 + 红 */
+        } else if (rssi >= -60) {
+            s_wifi_level = 3;            /* 三道光弧全亮 */
+        } else if (rssi >= -73) {
             s_wifi_level = 2;
         } else {
             s_wifi_level = 1;
@@ -1556,6 +1583,254 @@ bool ui_home_chart_open(void)
     return s_chart_visible;
 }
 
+/* ---------------- 空调页 ---------------- */
+
+static const char *hvac_label(const char *mode)
+{
+    if (strcmp(mode, "off") == 0) return "关";
+    if (strcmp(mode, "auto") == 0) return "自动";
+    if (strcmp(mode, "cool") == 0) return "制冷";
+    if (strcmp(mode, "heat") == 0) return "制热";
+    if (strcmp(mode, "dry") == 0) return "除湿";
+    if (strcmp(mode, "fan_only") == 0) return "送风";
+    return mode;
+}
+
+static const char *fan_label(const char *f)
+{
+    if (strcmp(f, "auto") == 0) return "自动";
+    if (strcmp(f, "low") == 0) return "低";
+    if (strcmp(f, "medium low") == 0) return "中低";
+    if (strcmp(f, "medium") == 0) return "中";
+    if (strcmp(f, "medium high") == 0) return "中高";
+    if (strcmp(f, "high") == 0) return "高";
+    if (strcmp(f, "silent") == 0) return "静音";
+    if (strcmp(f, "turbo") == 0) return "强力";
+    return f;
+}
+
+/* 一次点击的上下文：哪个实体、哪个服务、参数是什么 */
+typedef struct {
+    char entity[96];
+    char service[24];
+    char attrs[48];
+} clim_cmd_t;
+
+static void clim_chip_cb(lv_event_t *e)
+{
+    clim_cmd_t *c = (clim_cmd_t *)lv_event_get_user_data(e);
+    if (c == NULL || s_cmd_q == NULL) {
+        return;
+    }
+    cmd_t cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    snprintf(cmd.entity, sizeof(cmd.entity), "%s", c->entity);
+    snprintf(cmd.service, sizeof(cmd.service), "%s", c->service);
+    snprintf(cmd.attrs, sizeof(cmd.attrs), "%s", c->attrs);
+    xQueueSend(s_cmd_q, &cmd, 0);
+}
+
+static void clim_add_chip(lv_obj_t *row, const char *entity, const char *service,
+                          const char *attrs, const char *label, bool active)
+{
+    lv_obj_t *chip = lv_button_create(row);
+    lv_obj_set_size(chip, 52, 28);
+    lv_obj_set_style_radius(chip, 14, 0);
+    lv_obj_set_style_bg_color(chip, active ? lv_color_white() : lv_color_hex(0x24262B), 0);
+    lv_obj_set_style_bg_opa(chip, active ? LV_OPA_COVER : LV_OPA_80, 0);
+    lv_obj_set_style_pad_all(chip, 0, 0);
+
+    lv_obj_t *lbl = lv_label_create(chip);
+    lv_label_set_text(lbl, label);
+    lv_obj_set_style_text_font(lbl, &lv_font_noto_18_cjk, 0);
+    lv_obj_set_style_text_color(lbl, active ? lv_color_black() : COLOR_TEXT, 0);
+    lv_obj_center(lbl);
+
+    clim_cmd_t *ctx = calloc(1, sizeof(clim_cmd_t));
+    if (ctx != NULL) {
+        snprintf(ctx->entity, sizeof(ctx->entity), "%s", entity);
+        snprintf(ctx->service, sizeof(ctx->service), "%s", service);
+        snprintf(ctx->attrs, sizeof(ctx->attrs), "%s", attrs);
+        lv_obj_add_event_cb(chip, clim_chip_cb, LV_EVENT_CLICKED, ctx);
+    }
+}
+
+static void clim_slider_cb(lv_event_t *e)
+{
+    lv_obj_t *slider = lv_event_get_target(e);
+    const int v = (int)lv_slider_get_value(slider);
+    if (lv_event_get_code(e) != LV_EVENT_RELEASED || s_cmd_q == NULL) {
+        return;
+    }
+    cmd_t cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    snprintf(cmd.entity, sizeof(cmd.entity), "%s", s_clim_entity);
+    snprintf(cmd.service, sizeof(cmd.service), "set_temperature");
+    snprintf(cmd.attrs, sizeof(cmd.attrs), "{\"temperature\":%d}", v);
+    xQueueSend(s_cmd_q, &cmd, 0);
+    char buf[24];
+    snprintf(buf, sizeof(buf), "目标 %d°", v);
+    lv_label_set_text(s_clim_temp, buf);
+}
+
+static void clim_back_cb(lv_event_t *e)
+{
+    (void)e;
+    ui_home_close_climate();
+}
+
+static void build_climate_view(lv_obj_t *scr)
+{
+    s_clim_page = lv_obj_create(scr);
+    lv_obj_remove_style_all(s_clim_page);
+    lv_obj_set_size(s_clim_page, 360, 360);
+    lv_obj_set_pos(s_clim_page, 0, 0);
+    lv_obj_set_style_bg_color(s_clim_page, lv_color_hex(0x0B0B0D), 0);
+    lv_obj_set_style_bg_opa(s_clim_page, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(s_clim_page, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_clim_page, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t *back = lv_button_create(s_clim_page);
+    lv_obj_set_size(back, 36, 36);
+    lv_obj_align(back, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_set_style_bg_opa(back, LV_OPA_20, 0);
+    lv_obj_set_style_radius(back, LV_RADIUS_CIRCLE, 0);
+    lv_obj_add_event_cb(back, clim_back_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *bl = lv_label_create(back);
+    lv_label_set_text(bl, LV_SYMBOL_LEFT);
+    lv_obj_center(bl);
+
+    s_clim_title = lv_label_create(s_clim_page);
+    lv_label_set_text(s_clim_title, "--");
+    lv_obj_set_style_text_font(s_clim_title, &lv_font_noto_18_cjk, 0);
+    lv_obj_set_style_text_color(s_clim_title, COLOR_TEXT, 0);
+    lv_obj_align(s_clim_title, LV_ALIGN_TOP_MID, 0, 54);
+
+    s_clim_temp = lv_label_create(s_clim_page);
+    lv_label_set_text(s_clim_temp, "--");
+    lv_obj_set_style_text_font(s_clim_temp, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(s_clim_temp, COLOR_TEXT, 0);
+    lv_obj_align(s_clim_temp, LV_ALIGN_TOP_MID, 0, 84);
+
+    s_clim_span = lv_label_create(s_clim_page);
+    lv_label_set_text(s_clim_span, "");
+    lv_obj_set_style_text_font(s_clim_span, &lv_font_noto_18_cjk, 0);
+    lv_obj_set_style_text_color(s_clim_span, COLOR_MUTED, 0);
+    lv_obj_align(s_clim_span, LV_ALIGN_TOP_MID, 0, 116);
+
+    s_clim_slider = lv_slider_create(s_clim_page);
+    lv_obj_set_width(s_clim_slider, 280);
+    lv_obj_set_height(s_clim_slider, 12);
+    lv_obj_align(s_clim_slider, LV_ALIGN_TOP_MID, 0, 152);
+    lv_slider_set_range(s_clim_slider, 16, 30);
+    lv_obj_add_event_cb(s_clim_slider, clim_slider_cb, LV_EVENT_RELEASED, NULL);
+
+    s_clim_modes_row = lv_obj_create(s_clim_page);
+    lv_obj_remove_style_all(s_clim_modes_row);
+    lv_obj_set_size(s_clim_modes_row, 330, 64);
+    lv_obj_align(s_clim_modes_row, LV_ALIGN_TOP_MID, 0, 190);
+    lv_obj_set_flex_flow(s_clim_modes_row, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_style_pad_gap(s_clim_modes_row, 6, 0);
+
+    s_clim_fans_row = lv_obj_create(s_clim_page);
+    lv_obj_remove_style_all(s_clim_fans_row);
+    lv_obj_set_size(s_clim_fans_row, 330, 64);
+    lv_obj_align(s_clim_fans_row, LV_ALIGN_TOP_MID, 0, 262);
+    lv_obj_set_flex_flow(s_clim_fans_row, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_style_pad_gap(s_clim_fans_row, 6, 0);
+}
+
+void ui_home_open_climate(const char *entity_id)
+{
+    if (s_clim_page == NULL || entity_id == NULL) {
+        return;
+    }
+    snprintf(s_clim_entity, sizeof(s_clim_entity), "%s", entity_id);
+    const ha_entity_t *e = ha_client_find(s_clim_entity);
+    if (e == NULL) {
+        return;
+    }
+    lv_label_set_text(s_clim_title, e->name);
+
+    char buf[48];
+    if (e->cur_temp > 0) {
+        snprintf(buf, sizeof(buf), "室内 %.1f°  目标 %.0f°", e->cur_temp, e->target_temp);
+    } else {
+        snprintf(buf, sizeof(buf), "目标 %.0f°", e->target_temp);
+    }
+    lv_label_set_text(s_clim_temp, buf);
+    lv_label_set_text(s_clim_span, e->state);
+
+    lv_slider_set_range(s_clim_slider, (int32_t)e->min_temp, (int32_t)e->max_temp);
+    if (e->target_temp > 0) {
+        lv_slider_set_value(s_clim_slider, (int32_t)e->target_temp, LV_ANIM_OFF);
+    }
+
+    /* 重建模式/风速按钮 */
+    lv_obj_clean(s_clim_modes_row);
+    if (e->hvac_modes[0]) {
+        char tmp[80];
+        snprintf(tmp, sizeof(tmp), "%s", e->hvac_modes);
+        char *save = NULL;
+        for (char *tok = strtok_r(tmp, ",", &save); tok != NULL; tok = strtok_r(NULL, ",", &save)) {
+            char attrs[48];
+            snprintf(attrs, sizeof(attrs), "{\"hvac_mode\":\"%s\"}", tok);
+            clim_add_chip(s_clim_modes_row, s_clim_entity, "set_hvac_mode", attrs,
+                          hvac_label(tok), strcmp(tok, e->state) == 0);
+        }
+    }
+
+    lv_obj_clean(s_clim_fans_row);
+    if (e->fan_modes[0]) {
+        char tmp[80];
+        snprintf(tmp, sizeof(tmp), "%s", e->fan_modes);
+        char *save = NULL;
+        int n = 0;
+        for (char *tok = strtok_r(tmp, ",", &save); tok != NULL && n < 6; tok = strtok_r(NULL, ",", &save), n++) {
+            char attrs[48];
+            snprintf(attrs, sizeof(attrs), "{\"fan_mode\":\"%s\"}", tok);
+            clim_add_chip(s_clim_fans_row, s_clim_entity, "set_fan_mode", attrs,
+                          fan_label(tok), false);
+        }
+    }
+
+    s_clim_visible = true;
+    lv_obj_remove_flag(s_clim_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_pos(s_clim_page, 0, 0);
+    lv_obj_set_style_translate_x(s_clim_page, 360, 0);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_clim_page);
+    lv_anim_set_values(&a, 360, 0);
+    lv_anim_set_time(&a, 220);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_exec_cb(&a, anim_translate_cb);
+    lv_anim_start(&a);
+    ESP_LOGI(TAG, "打开空调页: %s (modes=%s)", s_clim_entity, e->hvac_modes);
+}
+
+void ui_home_close_climate(void)
+{
+    if (s_clim_page == NULL || !s_clim_visible) {
+        return;
+    }
+    s_clim_visible = false;
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_clim_page);
+    lv_anim_set_values(&a, 0, 360);
+    lv_anim_set_time(&a, 200);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
+    lv_anim_set_exec_cb(&a, anim_translate_cb);
+    lv_anim_start(&a);
+    lv_obj_add_flag(s_clim_page, LV_OBJ_FLAG_HIDDEN);
+}
+
+bool ui_home_climate_open(void)
+{
+    return s_clim_visible;
+}
+
 static void build_ui(void)
 {
     lv_obj_t *scr = lv_screen_active();
@@ -1690,6 +1965,8 @@ static void build_ui(void)
     s_detail_visible = false;
     build_chart_view(scr);
     s_chart_visible = false;
+    build_climate_view(scr);
+    s_clim_visible = false;
 
     ui_enable_gesture_bubble(scr);   /* 左右滑动翻页 */
 }

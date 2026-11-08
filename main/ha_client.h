@@ -27,6 +27,12 @@ typedef struct {
     bool has_tint;         /* 支持色温调节 */
     bool seen_brightness;  /* 是否拿到过真实亮度（灯关闭时 HA 不返回） */
     bool seen_tint;
+    /* 空调类实体 */
+    float cur_temp;        /* 当前温度 */
+    float target_temp;     /* 目标温度 */
+    float min_temp, max_temp;
+    char hvac_modes[80];   /* 逗号分隔，如 "off,cool,heat" */
+    char fan_modes[80];
 } ha_entity_t;
 
 /** 读取 settings 里的 HA 地址/令牌，创建 HTTP 客户端。 */
