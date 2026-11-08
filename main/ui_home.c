@@ -688,7 +688,7 @@ static void refresh_status_page(void)
 static const lv_font_t *value_font_for(const char *text)
 {
     if (text == NULL) {
-        return &lv_font_montserrat_28;
+        return &lv_font_montserrat_24;
     }
     /* 只对三字节 UTF-8（汉字/日文等，0xE0 起）切字体；
        像 "°C" 这种两字节符号（0xC2 0xB0）西文字体本身就带，不能切小 */
@@ -697,7 +697,7 @@ static const lv_font_t *value_font_for(const char *text)
             return &lv_font_noto_18_cjk;
         }
     }
-    return &lv_font_montserrat_28;
+    return &lv_font_montserrat_24;
 }
 
 static void refresh_values(void)
