@@ -82,8 +82,11 @@ static esp_err_t fetch_event(esp_http_client_event_t *ev)
 }
 
 /** 下载到 PSRAM 缓冲（走 perform，TLS/重定向都交给 esp_http_client 处理）。 */
-static uint8_t *http_fetch(const char *url, size_t *out_len)
+static uint8_t *http_fetch(const char *url, size_t *out_len, int *out_status)
 {
+    if (out_status) {
+        *out_status = 0;
+    }
     uint8_t *buf = heap_caps_malloc(BG_JPEG_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (buf == NULL) {
         ESP_LOGE(TAG, "no PSRAM for jpeg buffer");
@@ -110,6 +113,9 @@ static uint8_t *http_fetch(const char *url, size_t *out_len)
     const int status = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
 
+    if (out_status) {
+        *out_status = status;
+    }
     if (err != ESP_OK || status != 200 || ctx.len == 0 || ctx.overflow) {
         ESP_LOGW(TAG, "%s -> %s, HTTP %d, %d bytes%s", url, esp_err_to_name(err), status,
                  (int)ctx.len, ctx.overflow ? " (too large)" : "");
@@ -275,10 +281,15 @@ static void bg_task(void *arg)
             ESP_LOGI(TAG, "background %d/%d 来自缓存", s_index + 1, s_cfg.count);
         } else {
             for (int attempt = 0; attempt < 3 && s_running; attempt++) {
-                jpg = http_fetch(url, &jpg_len);
+                int st = 0;
+                jpg = http_fetch(url, &jpg_len, &st);
                 if (jpg != NULL) {
                     bg_cache_put(s_index, url, jpg, jpg_len);
                     break;
+                }
+                if (st == 404) {
+                    ESP_LOGW(TAG, "图片不存在 (404)，跳过这张");
+                    break;      /* 404 重试也没用 */
                 }
                 ESP_LOGW(TAG, "下载失败，%d 秒后重试 (%d/3)", 3, attempt + 1);
                 vTaskDelay(pdMS_TO_TICKS(3000));

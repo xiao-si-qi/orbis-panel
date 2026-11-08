@@ -109,7 +109,15 @@ static lv_obj_t *s_chart_max;
 static lv_obj_t *s_chart_avg;
 static lv_obj_t *s_chart_back_label;
 static bool s_chart_visible;
+static volatile bool s_chart_wanted;
+static volatile int s_chart_gen;
 static char s_chart_entity[96];
+/* 最近一次成功的折线图数据：60 秒内同一实体直接复用，避免每次点击都走网络 */
+static char s_chart_cache_entity[96];
+static float s_chart_cache_vals[32];
+static int s_chart_cache_n;
+static float s_chart_cache_min, s_chart_cache_max, s_chart_cache_avg;
+static uint32_t s_chart_cache_at;
 static char s_detail_entity[96];
 /* 用户刚拖过滑条时，短时间内以本地值为准（HA 的轮询会慢半拍，灯关着时甚至没有 brightness） */
 static bool s_sw_override_on;
@@ -130,6 +138,7 @@ typedef struct {
     char entity[96];
     char service[12];
     char attrs[64];      /* 非空则带参数调用（亮度/色温） */
+    int gen;             /* 折线图请求代际：过期结果直接丢掉 */
 } cmd_t;
 
 /* ------------------------------------------------------------------------- */
@@ -413,15 +422,33 @@ static void tile_clicked_cb(lv_event_t *e)
 
     /* 传感器：点开折线图（历史数据由后台任务拉取） */
     if (w->type == TILE_SENSOR) {
+        /* 已经在看同一张图：不重复请求 */
+        if (s_chart_visible && strcmp(s_chart_entity, w->entity) == 0) {
+            return;
+        }
+        /* 缓存命中：直接画，不发请求 */
+        if (strcmp(s_chart_cache_entity, w->entity) == 0 && s_chart_cache_n > 0 &&
+            (lv_tick_get() - s_chart_cache_at) < 60000) {
+            ui_home_show_chart(w->entity, s_chart_cache_vals, s_chart_cache_n,
+                               s_chart_cache_min, s_chart_cache_max, s_chart_cache_avg);
+            return;
+        }
+
         cmd_t cmd;
         memset(&cmd, 0, sizeof(cmd));
         snprintf(cmd.entity, sizeof(cmd.entity), "%s", w->entity);
         snprintf(cmd.service, sizeof(cmd.service), "chart");
+        s_chart_gen++;
+        cmd.gen = s_chart_gen;
+        s_chart_wanted = true;
         xQueueSend(s_cmd_q, &cmd, 0);
-        ESP_LOGI(TAG, "请求折线图: %s", w->entity);
+        ESP_LOGI(TAG, "请求折线图: %s (gen %d)", w->entity, cmd.gen);
         if (s_chart_page != NULL && !s_chart_visible) {
+            snprintf(s_chart_entity, sizeof(s_chart_entity), "%s", w->entity);
             lv_label_set_text(s_chart_title, "加载中…");
             s_chart_visible = true;
+            lv_obj_set_pos(s_chart_page, 0, 0);
+            lv_obj_set_style_translate_x(s_chart_page, 0, 0);
             lv_obj_remove_flag(s_chart_page, LV_OBJ_FLAG_HIDDEN);
         }
         return;
@@ -728,7 +755,11 @@ static void worker_task(void *arg)
                 esp_err_t he = ha_client_history(cmd.entity, 6, vals, 32, &n, &vmin, &vmax, &vavg);
                 if (he == ESP_OK && n > 0) {
                     lv_lock();
-                    ui_home_show_chart(cmd.entity, vals, n, vmin, vmax, vavg);
+                    if (cmd.gen == s_chart_gen && s_chart_wanted) {
+                        ui_home_show_chart(cmd.entity, vals, n, vmin, vmax, vavg);
+                    } else {
+                        ESP_LOGI(TAG, "折线图结果已过期，丢弃 (%d != %d)", cmd.gen, s_chart_gen);
+                    }
                     lv_unlock();
                 } else {
                     ESP_LOGW(TAG, "折线图无数据: %s", cmd.entity);
@@ -1309,6 +1340,16 @@ void ui_home_show_chart(const char *entity_id, const float *vals, int n,
     }
     lv_chart_refresh(s_chart);
 
+    /* 记下这次结果，60 秒内复用 */
+    snprintf(s_chart_cache_entity, sizeof(s_chart_cache_entity), "%s", s_chart_entity);
+    const int keep = (n > 32) ? 32 : n;
+    memcpy(s_chart_cache_vals, vals, sizeof(float) * (size_t)keep);
+    s_chart_cache_n = keep;
+    s_chart_cache_min = vmin;
+    s_chart_cache_max = vmax;
+    s_chart_cache_avg = vavg;
+    s_chart_cache_at = lv_tick_get();
+
     const char *unit = (e != NULL) ? e->unit : "";
     char buf[40];
     snprintf(buf, sizeof(buf), "最低 %.1f%s", vmin, unit);
@@ -1339,6 +1380,8 @@ void ui_home_close_chart(void)
         return;
     }
     s_chart_visible = false;
+    s_chart_wanted = false;
+    s_chart_gen++;          /* 在途的请求全部作废，返回后不会再自己弹出来 */
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, s_chart_page);
