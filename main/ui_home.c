@@ -448,11 +448,24 @@ static void tile_clicked_cb(lv_event_t *e)
         ESP_LOGI(TAG, "请求折线图: %s (gen %d)", w->entity, cmd.gen);
         if (s_chart_page != NULL && !s_chart_visible) {
             snprintf(s_chart_entity, sizeof(s_chart_entity), "%s", w->entity);
-            lv_label_set_text(s_chart_title, "加载中…");
+            const ha_entity_t *ent = ha_client_find(w->entity);
+            lv_label_set_text(s_chart_title, ent ? ent->name : w->entity);
+            lv_label_set_text(s_chart_span, "加载中…");
+            s_chart_pts_n = 0;               /* 清掉上一张图的线 */
+            lv_obj_invalidate(s_chart);
             s_chart_visible = true;
             lv_obj_set_pos(s_chart_page, 0, 0);
-            lv_obj_set_style_translate_x(s_chart_page, 0, 0);
+            lv_obj_set_style_translate_x(s_chart_page, 360, 0);
             lv_obj_remove_flag(s_chart_page, LV_OBJ_FLAG_HIDDEN);
+
+            lv_anim_t a;
+            lv_anim_init(&a);
+            lv_anim_set_var(&a, s_chart_page);
+            lv_anim_set_values(&a, 360, 0);
+            lv_anim_set_time(&a, 220);
+            lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+            lv_anim_set_exec_cb(&a, anim_translate_cb);
+            lv_anim_start(&a);
         }
         return;
     }
@@ -1398,6 +1411,7 @@ void ui_home_show_chart(const char *entity_id, const float *vals, int n,
     s_chart_cache_avg = vavg;
     s_chart_cache_at = lv_tick_get();
 
+    lv_label_set_text(s_chart_span, "近 3 小时");
     const char *unit = (e != NULL) ? e->unit : "";
     char buf[40];
     snprintf(buf, sizeof(buf), "最低 %.1f%s", vmin, unit);
@@ -1407,19 +1421,25 @@ void ui_home_show_chart(const char *entity_id, const float *vals, int n,
     snprintf(buf, sizeof(buf), "最高 %.1f%s", vmax, unit);
     lv_label_set_text(s_chart_max, buf);
 
+    const bool already_open = s_chart_visible;
     s_chart_visible = true;
     lv_obj_remove_flag(s_chart_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_pos(s_chart_page, 0, 0);
-    lv_obj_set_style_translate_x(s_chart_page, 360, 0);
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, s_chart_page);
-    lv_anim_set_values(&a, 360, 0);
-    lv_anim_set_time(&a, 220);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
-    lv_anim_set_exec_cb(&a, anim_translate_cb);
-    lv_anim_start(&a);
-    ESP_LOGI(TAG, "显示折线图: %s (%d 点)", s_chart_entity, n);
+    if (!already_open) {
+        /* 只有第一次出现才滑入；数据晚到时不要再演一遍动画 */
+        lv_obj_set_style_translate_x(s_chart_page, 360, 0);
+        lv_anim_t a;
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, s_chart_page);
+        lv_anim_set_values(&a, 360, 0);
+        lv_anim_set_time(&a, 220);
+        lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+        lv_anim_set_exec_cb(&a, anim_translate_cb);
+        lv_anim_start(&a);
+    } else {
+        lv_obj_set_style_translate_x(s_chart_page, 0, 0);
+    }
+    ESP_LOGI(TAG, "显示折线图: %s (%d 点)%s", s_chart_entity, n, already_open ? " (更新)" : "");
 }
 
 void ui_home_close_chart(void)
