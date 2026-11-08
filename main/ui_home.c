@@ -755,7 +755,6 @@ static void detail_apply_entity(void)
     /* 不再显示"已开/已关"文字：开=白色底、关=黑色底，一眼可辨 */
     lv_obj_set_style_bg_color(s_detail_power_btn, e->on ? lv_color_white() : lv_color_hex(0x151517), 0);
     lv_obj_set_style_text_color(s_detail_power_label, e->on ? lv_color_black() : lv_color_white(), 0);
-    lv_label_set_text(s_detail_power_label, e->on ? "关" : "开");
     detail_update_ambience();
 
     if (s_detail_br_row) {
@@ -828,10 +827,7 @@ static void detail_slider_changed_cb(lv_event_t *e)
         s_br_override = v;
         s_br_override_until = lv_tick_get() + OVERRIDE_MS;
         snprintf(cmd.attrs, sizeof(cmd.attrs), "{\"brightness_pct\":%d}", v);
-        /* 乐观：调亮度会开灯 —— 按钮立刻变白，底色跟着亮起来 */
-        lv_obj_set_style_bg_color(s_detail_power_btn, lv_color_white(), 0);
-        lv_obj_set_style_text_color(s_detail_power_label, lv_color_black(), 0);
-        lv_label_set_text(s_detail_power_label, "关");
+        /* 调亮度会把灯点亮，但按钮交给轮询去更新，避免拖动时乱跳 */
     } else {
         s_ct_override = v;
         s_ct_override_until = lv_tick_get() + OVERRIDE_MS;
@@ -852,7 +848,7 @@ static void detail_power_cb(lv_event_t *e)
     /* 乐观更新：先翻转界面，立刻有反馈；真正结果稍后由轮询校正 */
     lv_obj_set_style_bg_color(s_detail_power_btn, now_on ? lv_color_hex(0x151517) : lv_color_white(), 0);
     lv_obj_set_style_text_color(s_detail_power_label, now_on ? lv_color_white() : lv_color_black(), 0);
-    lv_label_set_text(s_detail_power_label, now_on ? "开" : "关");
+    detail_update_ambience();
 
     cmd_t cmd;
     memset(&cmd, 0, sizeof(cmd));
@@ -900,10 +896,11 @@ static void build_detail_view(lv_obj_t *scr)
     lv_obj_align(s_detail_power_btn, LV_ALIGN_TOP_MID, 0, 128);
     lv_obj_set_style_radius(s_detail_power_btn, 18, 0);
     lv_obj_set_style_bg_color(s_detail_power_btn, COLOR_ACCENT, 0);
+    lv_obj_set_style_pad_all(s_detail_power_btn, 0, 0);
     lv_obj_add_event_cb(s_detail_power_btn, detail_power_cb, LV_EVENT_CLICKED, NULL);
     s_detail_power_label = lv_label_create(s_detail_power_btn);
-    lv_label_set_text(s_detail_power_label, "开关");
-    lv_obj_set_style_text_font(s_detail_power_label, &lv_font_noto_18_cjk, 0);
+    lv_label_set_text(s_detail_power_label, LV_SYMBOL_POWER);
+    lv_obj_set_style_text_font(s_detail_power_label, &lv_font_montserrat_28, 0);
     lv_obj_center(s_detail_power_label);
 
     /* 亮度 */
