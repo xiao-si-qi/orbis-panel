@@ -8,6 +8,7 @@ idf_component_register(
         "mqtt_link.c"
             "log_buffer.c"
             "bg_image.c"
+            "bg_cache.c"
         "ota.c"
         "ui_home.c"
         "bsp_display.c"
@@ -33,6 +34,10 @@ idf_component_register(
         mqtt
         bootloader_support
         nvs_flash
+        fatfs
+        wear_levelling
+        esp_driver_sdmmc
+        sdmmc
         esp_lcd_st77916
         cst816s
         lvgl

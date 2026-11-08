@@ -22,6 +22,7 @@
 #include "jpeg_decoder.h"
 
 #include "app_settings.h"
+#include "bg_cache.h"
 #include "bg_image.h"
 
 static const char *TAG = "bg";
@@ -49,55 +50,70 @@ static size_t s_frame_len = 0;
 static lv_image_dsc_t s_dsc;
 static lv_obj_t *s_img = NULL;
 static lv_obj_t *s_dim = NULL;
+static volatile bool s_frame_ready = false;
 static int s_shown_w = 0;
 static int s_shown_h = 0;
 
 /* ---------------------------- 图像下载/解码 ---------------------------- */
 
+typedef struct {
+    uint8_t *buf;
+    size_t cap;
+    size_t len;
+    bool overflow;
+} fetch_ctx_t;
+
+static esp_err_t fetch_event(esp_http_client_event_t *ev)
+{
+    fetch_ctx_t *ctx = (fetch_ctx_t *)ev->user_data;
+    if (ev->event_id == HTTP_EVENT_ON_DATA && ctx != NULL) {
+        const size_t n = (size_t)ev->data_len;
+        if (ctx->len + n > ctx->cap) {
+            ctx->overflow = true;
+            return ESP_OK;
+        }
+        memcpy(ctx->buf + ctx->len, ev->data, n);
+        ctx->len += n;
+    }
+    return ESP_OK;
+}
+
+/** 下载到 PSRAM 缓冲（走 perform，TLS/重定向都交给 esp_http_client 处理）。 */
 static uint8_t *http_fetch(const char *url, size_t *out_len)
 {
+    uint8_t *buf = heap_caps_malloc(BG_JPEG_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (buf == NULL) {
+        ESP_LOGE(TAG, "no PSRAM for jpeg buffer");
+        return NULL;
+    }
+
+    fetch_ctx_t ctx = {.buf = buf, .cap = BG_JPEG_MAX, .len = 0, .overflow = false};
     esp_http_client_config_t cfg = {
         .url = url,
         .timeout_ms = 15000,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .buffer_size = 4096,
+        .event_handler = fetch_event,
+        .user_data = &ctx,
         .keep_alive_enable = false,
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (client == NULL) {
-        return NULL;
-    }
-
-    uint8_t *buf = NULL;
-    size_t len = 0;
-    if (esp_http_client_open(client, 0) == ESP_OK) {
-        esp_http_client_fetch_headers(client);
-        if (esp_http_client_get_status_code(client) == 200) {
-            buf = heap_caps_malloc(BG_JPEG_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-            if (buf != NULL) {
-                for (;;) {
-                    const int n = esp_http_client_read(client, (char *)buf + len, BG_JPEG_MAX - len);
-                    if (n <= 0) {
-                        break;
-                    }
-                    len += (size_t)n;
-                    if (len >= BG_JPEG_MAX) {
-                        break;
-                    }
-                }
-            }
-        } else {
-            ESP_LOGW(TAG, "%s -> HTTP %d", url, esp_http_client_get_status_code(client));
-        }
-    }
-    esp_http_client_close(client);
-    esp_http_client_cleanup(client);
-
-    if (buf == NULL || len == 0) {
         free(buf);
         return NULL;
     }
-    *out_len = len;
+
+    const esp_err_t err = esp_http_client_perform(client);
+    const int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+
+    if (err != ESP_OK || status != 200 || ctx.len == 0 || ctx.overflow) {
+        ESP_LOGW(TAG, "%s -> %s, HTTP %d, %d bytes%s", url, esp_err_to_name(err), status,
+                 (int)ctx.len, ctx.overflow ? " (too large)" : "");
+        free(buf);
+        return NULL;
+    }
+    *out_len = ctx.len;
     return buf;
 }
 
@@ -161,6 +177,7 @@ static bool decode_to_frame(const uint8_t *jpg, size_t jpg_len)
     }
     s_shown_w = out.width;
     s_shown_h = out.height;
+    s_frame_ready = true;
     s_dsc.data = s_frame;
     s_dsc.data_size = out.output_len;
     return true;
@@ -173,6 +190,7 @@ static void show_cb(void *arg)
 {
     (void)arg;
     if (s_img == NULL) {
+        /* UI 还没建好（或刚被重建）：留个标记，等 bg_image_bind 时补显示 */
         return;
     }
     s_dsc.header.w = s_shown_w;
@@ -201,6 +219,11 @@ static void show_cb(void *arg)
 static void bg_task(void *arg)
 {
     (void)arg;
+
+    /* 开机阶段 HA 实体拉取也在跑 TLS，两条握手同时开会把内部 RAM 顶爆
+       （表现为 esp-tls 读错误 -0x7F00）。先等网络/首轮请求稳定下来。 */
+    vTaskDelay(pdMS_TO_TICKS(4000));
+
     while (s_running) {
         if (s_cfg.count <= 0) {
             break;
@@ -211,7 +234,20 @@ static void bg_task(void *arg)
         const char *url = s_cfg.urls[s_index];
 
         size_t jpg_len = 0;
-        uint8_t *jpg = http_fetch(url, &jpg_len);
+        uint8_t *jpg = NULL;
+        if (bg_cache_get(s_index, url, &jpg, &jpg_len)) {
+            ESP_LOGI(TAG, "background %d/%d 来自缓存", s_index + 1, s_cfg.count);
+        } else {
+            for (int attempt = 0; attempt < 3 && s_running; attempt++) {
+                jpg = http_fetch(url, &jpg_len);
+                if (jpg != NULL) {
+                    bg_cache_put(s_index, url, jpg, jpg_len);
+                    break;
+                }
+                ESP_LOGW(TAG, "下载失败，%d 秒后重试 (%d/3)", 3, attempt + 1);
+                vTaskDelay(pdMS_TO_TICKS(3000));
+            }
+        }
         if (jpg != NULL) {
             if (decode_to_frame(jpg, jpg_len)) {
                 lv_async_call(show_cb, NULL);
@@ -272,6 +308,11 @@ void bg_image_bind(lv_obj_t *parent)
     lv_obj_remove_flag(s_dim, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(s_dim, s_cfg.dim_pct > 0 ? 0 : LV_OBJ_FLAG_HIDDEN);
 
+    /* 如果下载早就完成了，绑定之后立刻补显示 */
+    if (s_frame_ready) {
+        show_cb(NULL);
+    }
+
     /* 背景层在最底，暗化层紧贴其上，卡片会自动排在后面 */
     lv_obj_move_background(s_img);
     if (s_dim != NULL) {
@@ -283,6 +324,9 @@ void bg_image_bind(lv_obj_t *parent)
 void bg_image_stop(void)
 {
     s_running = false;
+    for (int i = 0; i < s_cfg.count; i++) {
+        bg_cache_drop(i);
+    }
     s_cfg.count = 0;
     if (s_img != NULL) {
         lv_obj_add_flag(s_img, LV_OBJ_FLAG_HIDDEN);
@@ -292,6 +336,7 @@ void bg_image_stop(void)
 void bg_image_apply_json(const char *json)
 {
     bg_image_init();
+    bg_cache_init();
     if (json == NULL) {
         bg_image_stop();
         return;
@@ -353,11 +398,17 @@ void bg_image_apply_json(const char *json)
         }
     }
 
+    for (int i = s_cfg.count; i < BG_MAX_IMAGES; i++) {
+        bg_cache_drop(i);      /* 数量变少时清掉多余缓存 */
+    }
     ESP_LOGI(TAG, "background: %d image(s), %ds, dim %d%%", s_cfg.count, s_cfg.interval_s, s_cfg.dim_pct);
 
     s_index = 0;
     s_running = true;
-    if (xTaskCreate(bg_task, "bg", 8192, NULL, 3, NULL) != pdPASS) {
+    ESP_LOGI(TAG, "starting bg task, internal heap %d KB (largest block %d KB)",
+             (int)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+             (int)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024));
+    if (xTaskCreate(bg_task, "bg", 10240, NULL, 3, NULL) != pdPASS) {
         s_running = false;
         ESP_LOGE(TAG, "failed to start background task");
     }

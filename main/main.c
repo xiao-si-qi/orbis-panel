@@ -94,19 +94,35 @@ static void network_task(void *arg)
 
 void app_main(void)
 {
+#define MEMSTEP(tag_name) \
+    ESP_LOGI(TAG, "MEMSTEP %-16s internal=%dKB largest=%dKB psram=%dKB", tag_name, \
+             (int)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024), \
+             (int)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024), \
+             (int)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024))
+
     ESP_LOGI(TAG, "Orbis Panel booting (JC3636W518), internal heap %d KB, psram %d KB",
              (int)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
              (int)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 
+    /* 关键：让 >=2KB 的普通 malloc 走 PSRAM（8MB），别再挤内部 RAM。
+       DMA/IRAM 强约束的分配不受影响（它们显式指定了 caps）。 */
+    heap_caps_malloc_extmem_enable(2048);
+
+    MEMSTEP("boot");
     ESP_ERROR_CHECK(app_settings_init());
+    MEMSTEP("settings");
 
     esp_lcd_panel_handle_t panel = NULL;
     ESP_ERROR_CHECK(bsp_display_init(&panel, NULL, NULL));
+    MEMSTEP("display");
     ESP_ERROR_CHECK(bsp_touch_init());
+    MEMSTEP("touch");
     ESP_ERROR_CHECK(bsp_lvgl_init(panel));
+    MEMSTEP("lvgl");
 
     ui_home_boot();
     bsp_lvgl_start();
+    MEMSTEP("boot-ui");
 
     /* 新固件跑起来（LVGL 已出画面）才算有效：配合 APP_ROLLBACK_ENABLE，
        如果新固件在到达这一步之前就崩了/断电，下次启动会自动回滚到旧固件 */
@@ -119,5 +135,6 @@ void app_main(void)
         }
     }
 
+    MEMSTEP("pre-net");
     xTaskCreate(network_task, "net", 8192, NULL, 4, NULL);
 }
