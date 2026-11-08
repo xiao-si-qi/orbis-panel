@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include "esp_check.h"
 #include "esp_log.h"
 #include "driver/i2c_master.h"
@@ -10,6 +12,22 @@ static const char *TAG = "bsp_touch";
 
 static cst816s_handle_t s_touch;
 static i2c_master_bus_handle_t s_bus;
+
+/** 扫描 I2C 总线（临时诊断：看看除了触摸还有没有别的器件，比如加速度计）。 */
+void bsp_touch_scan_bus(void)
+{
+    if (s_bus == NULL) {
+        return;
+    }
+    char found[160] = {0};
+    for (uint8_t addr = 0x08; addr < 0x78; addr++) {
+        if (i2c_master_probe(s_bus, addr, 50) == ESP_OK) {
+            const size_t n = strlen(found);
+            snprintf(found + n, sizeof(found) - n, " 0x%02X", addr);
+        }
+    }
+    ESP_LOGI(TAG, "I2C 扫描:%s", found[0] ? found : " (无)");
+}
 
 esp_err_t bsp_touch_init(void)
 {

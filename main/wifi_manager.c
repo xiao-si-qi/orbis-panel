@@ -25,16 +25,34 @@ static volatile bool s_connected;
 static volatile int s_retry;
 static httpd_handle_t s_httpd;
 
+/* 重连放到独立任务里做退避：**绝不能**在事件回调里 vTaskDelay，
+   那会把系统事件循环堵死，MQTT/TCP 事件全部停摆，界面看起来像卡死。 */
+static TaskHandle_t s_reconnect_task;
+
+static void reconnect_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);      /* 等断线通知 */
+        while (!s_connected && app_settings_has_wifi()) {
+            s_retry++;
+            const int delay_ms = (s_retry < 30) ? 500 * s_retry : 15000;
+            ESP_LOGW(TAG, "重连第 %d 次，%d ms 后重试", s_retry, delay_ms);
+            vTaskDelay(pdMS_TO_TICKS(delay_ms));
+            if (s_connected) {
+                break;
+            }
+            esp_wifi_connect();
+        }
+    }
+}
+
 static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         s_connected = false;
-        if (app_settings_has_wifi()) {
-            s_retry++;
-            int delay_ms = (s_retry < 30) ? 500 * s_retry : 15000;
-            ESP_LOGW(TAG, "disconnected, retry #%d in %d ms", s_retry, delay_ms);
-            vTaskDelay(pdMS_TO_TICKS(delay_ms));
-            esp_wifi_connect();
+        if (app_settings_has_wifi() && s_reconnect_task != NULL) {
+            xTaskNotifyGive(s_reconnect_task);        /* 交给重连任务处理 */
         }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *ev = (ip_event_got_ip_t *)data;
@@ -61,6 +79,10 @@ esp_err_t wifi_manager_init(void)
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_RETURN_ON_ERROR(esp_wifi_init(&cfg), TAG, "wifi init failed");
+
+    if (s_reconnect_task == NULL) {
+        xTaskCreate(reconnect_task, "wifi_retry", 4096, NULL, 3, &s_reconnect_task);
+    }
 
     ESP_RETURN_ON_ERROR(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                                             &wifi_event_handler, NULL, NULL),

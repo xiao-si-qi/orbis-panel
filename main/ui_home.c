@@ -811,5 +811,7 @@ void ui_home_apply(const layout_t *layout)
         memset(&s_layout, 0, sizeof(s_layout));
         s_layout_valid = false;
     }
+    lv_lock();
     lv_async_call(apply_async_cb, NULL);
+    lv_unlock();
 }

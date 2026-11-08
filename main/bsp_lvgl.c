@@ -108,6 +108,7 @@ static void lvgl_task(void *arg)
     (void)arg;
     while (true) {
         uint32_t delay_ms = lv_timer_handler();
+
         if (delay_ms > 10) {
             delay_ms = 10;
         }

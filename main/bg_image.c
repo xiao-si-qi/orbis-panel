@@ -43,6 +43,8 @@ typedef struct {
 
 static bg_cfg_t s_cfg;
 static volatile bool s_running = false;
+static volatile int s_gen;          /* 配置代际：旧任务看到代际变了就退出 */
+static volatile bool s_task_alive;
 static volatile int s_index = 0;
 
 static bool s_initialized = false;
@@ -187,6 +189,38 @@ static bool decode_to_frame(const uint8_t *jpg, size_t jpg_len)
 /* ------------------------------ LVGL 侧 ------------------------------ */
 
 /** LVGL 线程：显示当前缓冲区并淡入。 */
+/** 目标视觉状态：由任何线程设置，实际改 LVGL 对象必须在 LVGL 线程做。 */
+static volatile bool s_want_dim_visible;
+static volatile bool s_want_image_hidden;
+
+/** 在 LVGL 线程里应用目标状态（lv_async_call 回调）。 */
+static void apply_visual_cb(void *arg)
+{
+    (void)arg;
+    if (s_dim != NULL) {
+        lv_obj_set_style_bg_opa(s_dim,
+                                s_want_dim_visible ? (lv_opa_t)(s_cfg.dim_pct * 255 / 100) : LV_OPA_TRANSP, 0);
+        if (s_want_dim_visible) {
+            lv_obj_remove_flag(s_dim, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_dim, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (s_img != NULL && s_want_image_hidden) {
+        lv_obj_add_flag(s_img, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+/** 请求在 LVGL 线程里刷新视觉状态（可以从任意任务调用）。 */
+static void request_visual_update(bool dim_visible, bool image_hidden)
+{
+    s_want_dim_visible = dim_visible;
+    s_want_image_hidden = image_hidden;
+    lv_lock();
+    lv_async_call(apply_visual_cb, NULL);
+    lv_unlock();
+}
+
 static void show_cb(void *arg)
 {
     (void)arg;
@@ -219,13 +253,14 @@ static void show_cb(void *arg)
 
 static void bg_task(void *arg)
 {
-    (void)arg;
+    const int my_gen = (int)(intptr_t)arg;
+    s_task_alive = true;
 
     /* 开机阶段 HA 实体拉取也在跑 TLS，两条握手同时开会把内部 RAM 顶爆
        （表现为 esp-tls 读错误 -0x7F00）。先等网络/首轮请求稳定下来。 */
     vTaskDelay(pdMS_TO_TICKS(4000));
 
-    while (s_running) {
+    while (s_running && my_gen == s_gen) {
         if (s_cfg.count <= 0) {
             break;
         }
@@ -251,7 +286,9 @@ static void bg_task(void *arg)
         }
         if (jpg != NULL) {
             if (decode_to_frame(jpg, jpg_len)) {
+                lv_lock();
                 lv_async_call(show_cb, NULL);
+                lv_unlock();
                 ESP_LOGI(TAG, "background %d/%d shown (%dx%d)", s_index + 1, s_cfg.count, s_shown_w, s_shown_h);
             }
             free(jpg);
@@ -265,12 +302,15 @@ static void bg_task(void *arg)
             continue;
         }
 
-        for (int waited = 0; waited < s_cfg.interval_s * 10 && s_running; waited++) {
+        for (int waited = 0; waited < s_cfg.interval_s * 10 && s_running && my_gen == s_gen; waited++) {
             vTaskDelay(pdMS_TO_TICKS(100));
         }
         s_index++;
     }
-    s_running = false;
+    if (my_gen == s_gen) {
+        s_running = false;
+    }
+    s_task_alive = false;
     vTaskDelete(NULL);
 }
 
@@ -316,6 +356,10 @@ void bg_image_bind(lv_obj_t *parent)
     lv_obj_add_flag(s_img, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_background(s_img);       /* 图片沉到最底，暗化层在它上面 */
 
+    s_want_dim_visible = s_cfg.dim_pct > 0;
+    s_want_image_hidden = !s_frame_ready;
+    apply_visual_cb(NULL);      /* bind 本身就在 LVGL 线程 */
+
     ESP_LOGI(TAG, "bind: dim %d%% (opa %d), image behind", s_cfg.dim_pct,
              (int)(s_cfg.dim_pct * 255 / 100));
 
@@ -337,9 +381,7 @@ void bg_image_stop(void)
         bg_cache_drop(i);
     }
     s_cfg.count = 0;
-    if (s_img != NULL) {
-        lv_obj_add_flag(s_img, LV_OBJ_FLAG_HIDDEN);
-    }
+    request_visual_update(false, true);   /* 隐藏图片也交给 LVGL 线程 */
 }
 
 void bg_image_apply_json(const char *json)
@@ -362,8 +404,15 @@ void bg_image_apply_json(const char *json)
         return;
     }
 
+    /* 关键：必须等旧任务真的退出，否则每次重连都会多出一个任务在跑 TLS */
     s_running = false;
-    vTaskDelay(pdMS_TO_TICKS(200));      /* 让旧任务退出 */
+    s_gen++;
+    for (int i = 0; i < 30 && s_task_alive; i++) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    if (s_task_alive) {
+        ESP_LOGW(TAG, "上一个背景任务 3 秒内没退出，继续");
+    }
 
     memset(&s_cfg, 0, sizeof(s_cfg));
     s_cfg.interval_s = 60;
@@ -403,15 +452,8 @@ void bg_image_apply_json(const char *json)
         return;
     }
 
-    /* 暗化层不透明度要跟着配置走 */
-    if (s_dim != NULL) {
-        lv_obj_set_style_bg_opa(s_dim, s_cfg.dim_pct > 0 ? (lv_opa_t)(s_cfg.dim_pct * 255 / 100) : LV_OPA_TRANSP, 0);
-        if (s_cfg.dim_pct > 0) {
-            lv_obj_remove_flag(s_dim, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(s_dim, LV_OBJ_FLAG_HIDDEN);
-        }
-    }
+    /* 注意：这里跑在 MQTT 任务里，**不能**直接改 LVGL 对象，必须切回 LVGL 线程 */
+    request_visual_update(s_cfg.dim_pct > 0, false);
 
     for (int i = s_cfg.count; i < BG_MAX_IMAGES; i++) {
         bg_cache_drop(i);      /* 数量变少时清掉多余缓存 */
@@ -423,7 +465,7 @@ void bg_image_apply_json(const char *json)
     ESP_LOGI(TAG, "starting bg task, internal heap %d KB (largest block %d KB)",
              (int)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
              (int)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024));
-    if (xTaskCreate(bg_task, "bg", 10240, NULL, 3, NULL) != pdPASS) {
+    if (xTaskCreate(bg_task, "bg", 10240, (void *)(intptr_t)s_gen, 3, NULL) != pdPASS) {
         s_running = false;
         ESP_LOGE(TAG, "failed to start background task");
     }

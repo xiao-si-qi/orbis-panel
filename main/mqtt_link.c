@@ -141,6 +141,18 @@ void mqtt_link_publish_event(const char *json)
 
 static void apply_layout_json(const char *json)
 {
+    if (json == NULL) {
+        return;
+    }
+    /* 重连时 broker 会重发同一份 retained cfg：内容没变就别重建 UI / 重启背景任务，
+       否则每次断线重连都会刷新一遍界面，还容易把背景任务堆起来。 */
+    static char last_cfg[2048];
+    if (last_cfg[0] != '\0' && strcmp(last_cfg, json) == 0) {
+        ESP_LOGI(TAG, "cfg 未变化，跳过重建");
+        return;
+    }
+    snprintf(last_cfg, sizeof(last_cfg), "%.*s", (int)(sizeof(last_cfg) - 1), json);
+
     layout_t *layout = calloc(1, sizeof(layout_t));
     if (layout == NULL) {
         return;
@@ -157,7 +169,6 @@ static void apply_layout_json(const char *json)
             ha_client_register(tile->entity, tile->label[0] ? tile->label : NULL);
         }
     }
-    ha_client_fetch_all();
     ui_home_apply(layout);
     bg_image_apply_json(json);      /* 背景图/轮播 */
     free(layout);
@@ -186,6 +197,7 @@ static void handle_cmd(const char *payload)
         cJSON_Delete(root);
         return;
     }
+
     ESP_LOGI(TAG, "cmd '%s' seq=%u", cmd, seq);
 
     if (strcmp(cmd, "reboot") == 0) {
