@@ -78,16 +78,18 @@ static void network_task(void *arg)
     }
 
     /* 布局只走 MQTT：NVS 里是上一次下发的，没收到过就只显示 System 页 */
-    layout_t layout;
-    if (layout_load_nvs(&layout) == ESP_OK) {
+    /* layout_t 现在约 11KB（6 页 × 12 卡片），本任务栈只有 8KB：必须放堆上 */
+    layout_t *layout = calloc(1, sizeof(layout_t));
+    if (layout != NULL && layout_load_nvs(layout) == ESP_OK) {
         /* 开机离线时也要用配置里的方向 */
         lv_lock();
-        bsp_lvgl_set_rotation(layout.rotation);
+        bsp_lvgl_set_rotation(layout->rotation);
         lv_unlock();
-        register_layout_entities(&layout);
+        register_layout_entities(layout);
         ha_client_fetch_all();
-        ui_home_apply(&layout);
-        ESP_LOGI(TAG, "layout restored from NVS (%d page(s))", layout.page_count);
+        ui_home_apply(layout);
+        ESP_LOGI(TAG, "layout restored from NVS (%d page(s))", layout->page_count);
+        free(layout);
     } else {
         ESP_LOGW(TAG, "no layout yet - waiting for switchyard/%s/cfg", mqtt_link_device_id());
         ui_home_apply(NULL);
