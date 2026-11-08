@@ -288,8 +288,8 @@ static void build_status_page(lv_obj_t *scr)
        叠在背景图 + 暗化层之上，比背景更暗一些。 */
     lv_obj_t *info_card = lv_obj_create(page);
     lv_obj_remove_style_all(info_card);
-    lv_obj_set_pos(info_card, 32, 60);
-    lv_obj_set_size(info_card, 296, 142);
+    lv_obj_set_pos(info_card, 32, 88);
+    lv_obj_set_size(info_card, 296, 132);
     lv_obj_set_style_bg_color(info_card, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(info_card, (lv_opa_t)(bg_image_card_opa_pct() * 255 / 100), 0);
     lv_obj_set_style_radius(info_card, 22, 0);
@@ -302,12 +302,12 @@ static void build_status_page(lv_obj_t *scr)
         lv_label_set_text(s_sys_lines[i], "--");
         lv_obj_set_style_text_font(s_sys_lines[i], &lv_font_noto_18_cjk, 0);
         lv_obj_set_style_text_color(s_sys_lines[i], COLOR_MUTED, 0);
-        lv_obj_set_pos(s_sys_lines[i], 48, 74 + i * 26);
+        lv_obj_set_pos(s_sys_lines[i], 48, 102 + i * 24);
     }
 
     s_ota_btn = lv_button_create(page);
     lv_obj_set_size(s_ota_btn, 200, 44);
-    lv_obj_align(s_ota_btn, LV_ALIGN_TOP_MID, 0, 214);
+    lv_obj_align(s_ota_btn, LV_ALIGN_TOP_MID, 0, 228);
     lv_obj_set_style_bg_color(s_ota_btn, COLOR_ACCENT, 0);
     lv_obj_set_style_radius(s_ota_btn, 14, 0);
     lv_obj_add_event_cb(s_ota_btn, ota_button_cb, LV_EVENT_CLICKED, NULL);
@@ -320,7 +320,7 @@ static void build_status_page(lv_obj_t *scr)
 
     s_ota_bar = lv_bar_create(page);
     lv_obj_set_size(s_ota_bar, 220, 10);
-    lv_obj_align(s_ota_bar, LV_ALIGN_TOP_MID, 0, 274);
+    lv_obj_align(s_ota_bar, LV_ALIGN_TOP_MID, 0, 286);
     lv_bar_set_range(s_ota_bar, 0, 100);
     lv_obj_add_flag(s_ota_bar, LV_OBJ_FLAG_HIDDEN);
 
@@ -330,7 +330,7 @@ static void build_status_page(lv_obj_t *scr)
     lv_obj_set_style_text_color(s_ota_status, COLOR_MUTED, 0);
     lv_obj_set_width(s_ota_status, 300);
     lv_obj_set_style_text_align(s_ota_status, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(s_ota_status, LV_ALIGN_TOP_MID, 0, 292);
+    lv_obj_align(s_ota_status, LV_ALIGN_TOP_MID, 0, 302);
 
     s_pages[s_json_pages] = page;
 }
