@@ -72,7 +72,9 @@ static lv_obj_t *s_dots[MAX_PAGES];
 static int s_page_count;
 
 static lv_obj_t *s_title;
-static lv_obj_t *s_wifi_dot;
+static lv_obj_t *s_wifi_icon;
+static lv_obj_t *s_wifi_label;
+static lv_color_t s_wifi_color;
 static lv_obj_t *s_ha_dot;
 static lv_obj_t *s_hint;
 static lv_timer_t *s_refresh_timer;
@@ -545,6 +547,42 @@ static void make_tile(lv_obj_t *parent, int page, int slot, int col, int row)
     w->value = value;
 }
 
+/** 用弧线画 WiFi 图标（和手机上的形状一致），颜色随信号强度。 */
+static void wifi_icon_draw_cb(lv_event_t *e)
+{
+    lv_obj_t *obj = lv_event_get_target(e);
+    lv_layer_t *layer = lv_event_get_layer(e);
+    if (layer == NULL) {
+        return;
+    }
+    lv_area_t a;
+    lv_obj_get_coords(obj, &a);
+
+    lv_draw_arc_dsc_t d;
+    lv_draw_arc_dsc_init(&d);
+    d.color = s_wifi_color;
+    d.width = 2;
+    d.rounded = 1;
+    d.start_angle = 205;      /* 顶部圆弧 */
+    d.end_angle = 335;
+    d.center.x = (a.x1 + a.x2) / 2;
+    d.center.y = a.y2 - 2;
+
+    const int radii[3] = {9, 6, 3};
+    for (int i = 0; i < 3; i++) {
+        d.radius = radii[i];
+        lv_draw_arc(layer, &d);
+    }
+
+    lv_draw_rect_dsc_t rd;
+    lv_draw_rect_dsc_init(&rd);
+    rd.bg_color = s_wifi_color;
+    rd.bg_opa = LV_OPA_COVER;
+    rd.radius = 1;
+    lv_area_t dot = {d.center.x - 1, d.center.y - 1, d.center.x + 1, d.center.y + 1};
+    lv_draw_rect(layer, &rd, &dot);
+}
+
 static lv_obj_t *make_status_dot(lv_obj_t *parent, int x, int y)
 {
     lv_obj_t *dot = lv_obj_create(parent);
@@ -752,8 +790,29 @@ static void refresh_timer_cb(lv_timer_t *t)
     }
     (void)t;
 
-    if (s_wifi_dot) {
-        lv_obj_set_style_bg_color(s_wifi_dot, wifi_manager_is_connected() ? COLOR_OK : COLOR_BAD, 0);
+    {
+        if (s_wifi_icon != NULL) {
+        const int rssi = wifi_manager_get_rssi();
+        if (!wifi_manager_is_connected()) {
+            s_wifi_color = COLOR_BAD;                 /* 未连接：红 */
+        } else if (rssi >= -60) {
+            s_wifi_color = COLOR_OK;                  /* 强：绿 */
+        } else if (rssi >= -78) {
+            s_wifi_color = lv_color_hex(0xE5B95B);    /* 中：黄 */
+        } else {
+            s_wifi_color = lv_color_hex(0xFF9F0A);     /* 弱：橙 */
+        }
+        lv_obj_invalidate(s_wifi_icon);
+        if (s_wifi_label != NULL) {
+            char buf[12];
+            if (wifi_manager_is_connected()) {
+                snprintf(buf, sizeof(buf), "%d", rssi);
+            } else {
+                snprintf(buf, sizeof(buf), "--");
+            }
+            lv_label_set_text(s_wifi_label, buf);
+        }
+    }
     }
 
     if (s_ha_dot) {
@@ -1509,7 +1568,8 @@ static void build_ui(void)
     s_json_pages = s_layout.page_count;
     s_page_count = s_json_pages + 1; /* 加 System 页 */
     s_title = NULL;
-    s_wifi_dot = NULL;
+    s_wifi_icon = NULL;
+    s_wifi_label = NULL;
     s_ha_dot = NULL;
     s_ota_btn = NULL;
     s_ota_bar = NULL;
@@ -1524,12 +1584,19 @@ static void build_ui(void)
     lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 18);
 
     /* 状态行 */
-    s_wifi_dot = make_status_dot(scr, 131, 62);
-    lv_obj_t *wifi_lbl = lv_label_create(scr);
-    lv_label_set_text(wifi_lbl, "WiFi");
-    lv_obj_set_style_text_color(wifi_lbl, COLOR_MUTED, 0);
-    lv_obj_set_style_text_font(wifi_lbl, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(wifi_lbl, 143, 56);
+    s_wifi_color = COLOR_BAD;
+    s_wifi_icon = lv_obj_create(scr);
+    lv_obj_remove_style_all(s_wifi_icon);
+    lv_obj_set_size(s_wifi_icon, 22, 18);
+    lv_obj_set_pos(s_wifi_icon, 118, 50);
+    lv_obj_remove_flag(s_wifi_icon, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_wifi_icon, wifi_icon_draw_cb, LV_EVENT_DRAW_MAIN, NULL);
+
+    s_wifi_label = lv_label_create(scr);
+    lv_label_set_text(s_wifi_label, "--");
+    lv_obj_set_style_text_color(s_wifi_label, COLOR_MUTED, 0);
+    lv_obj_set_style_text_font(s_wifi_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(s_wifi_label, 142, 56);
 
     s_ha_dot = make_status_dot(scr, 197, 62);
     lv_obj_t *ha_lbl = lv_label_create(scr);
