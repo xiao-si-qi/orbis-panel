@@ -45,6 +45,7 @@ static bg_cfg_t s_cfg;
 static volatile bool s_running = false;
 static volatile int s_gen;          /* 配置代际：旧任务看到代际变了就退出 */
 static volatile bool s_task_alive;
+static volatile bool s_paused;
 static volatile int s_index = 0;
 
 static bool s_initialized = false;
@@ -270,6 +271,9 @@ static void bg_task(void *arg)
         if (s_cfg.count <= 0) {
             break;
         }
+        while (s_paused && s_running && my_gen == s_gen) {
+            vTaskDelay(pdMS_TO_TICKS(200));   /* 拉图表时先让路 */
+        }
         if (s_index >= s_cfg.count) {
             s_index = 0;
         }
@@ -383,6 +387,11 @@ void bg_image_bind(lv_obj_t *parent)
 uint8_t bg_image_card_opa_pct(void)
 {
     return (uint8_t)s_cfg.card_pct;
+}
+
+void bg_image_set_paused(bool paused)
+{
+    s_paused = paused;
 }
 
 void bg_image_stop(void)

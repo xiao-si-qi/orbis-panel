@@ -103,7 +103,9 @@ static lv_obj_t *s_chart_page;
 static lv_obj_t *s_chart_title;
 static lv_obj_t *s_chart_span;
 static lv_obj_t *s_chart;
-static lv_chart_series_t *s_chart_ser;
+static float s_chart_pts[32];
+static int s_chart_pts_n;
+static float s_chart_lo, s_chart_hi;
 static lv_obj_t *s_chart_min;
 static lv_obj_t *s_chart_max;
 static lv_obj_t *s_chart_avg;
@@ -441,6 +443,7 @@ static void tile_clicked_cb(lv_event_t *e)
         s_chart_gen++;
         cmd.gen = s_chart_gen;
         s_chart_wanted = true;
+        bg_image_set_paused(true);      /* 让出 TLS/内存给历史请求 */
         xQueueSend(s_cmd_q, &cmd, 0);
         ESP_LOGI(TAG, "请求折线图: %s (gen %d)", w->entity, cmd.gen);
         if (s_chart_page != NULL && !s_chart_visible) {
@@ -753,6 +756,7 @@ static void worker_task(void *arg)
                 int n = 0;
                 float vmin = 0, vmax = 0, vavg = 0;
                 esp_err_t he = ha_client_history(cmd.entity, 6, vals, 32, &n, &vmin, &vmax, &vavg);
+                bg_image_set_paused(false);
                 if (he == ESP_OK && n > 0) {
                     lv_lock();
                     if (cmd.gen == s_chart_gen && s_chart_wanted) {
@@ -764,13 +768,16 @@ static void worker_task(void *arg)
                 } else {
                     ESP_LOGW(TAG, "折线图无数据: %s (%s)", cmd.entity, esp_err_to_name(he));
                     lv_lock();
-                    if (cmd.gen == s_chart_gen && s_chart_wanted) {
-                        lv_label_set_text(s_chart_title, ha_client_find(cmd.entity)
-                                                          ? ha_client_find(cmd.entity)->name
-                                                          : "没有数据");
-                        lv_label_set_text(s_chart_span, "取不到历史数据");
-                        s_chart_visible = false;      /* 允许下次重新请求 */
+                    if (cmd.gen == s_chart_gen) {
+                        const ha_entity_t *ent = ha_client_find(cmd.entity);
+                        lv_label_set_text(s_chart_title, ent ? ent->name : cmd.entity);
+                        lv_label_set_text(s_chart_span, "取不到历史数据，稍后再试");
+                        /* 页面保持打开（返回手势照常），但允许下次重新请求 */
                         s_chart_wanted = false;
+                        s_chart_visible = true;
+                        lv_obj_set_pos(s_chart_page, 0, 0);
+                        lv_obj_set_style_translate_x(s_chart_page, 0, 0);
+                        lv_obj_remove_flag(s_chart_page, LV_OBJ_FLAG_HIDDEN);
                     }
                     lv_unlock();
                 }
@@ -1250,6 +1257,49 @@ static void chart_back_cb(lv_event_t *e)
     ui_home_close_chart();
 }
 
+/** 自己画折线：没有内部状态、不分配内存，内存紧张时也稳。 */
+static void chart_draw_cb(lv_event_t *e)
+{
+    lv_obj_t *obj = lv_event_get_target(e);
+    lv_layer_t *layer = lv_event_get_layer(e);
+    if (s_chart_pts_n < 2 || layer == NULL) {
+        return;
+    }
+    lv_area_t a;
+    lv_obj_get_coords(obj, &a);
+    const int32_t w = lv_area_get_width(&a);
+    const int32_t h = lv_area_get_height(&a);
+    if (w < 2 || h < 2) {
+        return;
+    }
+
+    lv_draw_line_dsc_t d;
+    lv_draw_line_dsc_init(&d);
+    d.color = lv_color_hex(0x5AC8FA);
+    d.width = 3;
+    d.round_start = true;
+    d.round_end = true;
+
+    const float span = (s_chart_hi - s_chart_lo) > 0.0001f ? (s_chart_hi - s_chart_lo) : 1.0f;
+    int32_t prev_x = 0, prev_y = 0;
+    for (int i = 0; i < s_chart_pts_n; i++) {
+        float t = (s_chart_pts[i] - s_chart_lo) / span;
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+        const int32_t x = a.x1 + (int32_t)((int64_t)(w - 1) * i / (s_chart_pts_n - 1));
+        const int32_t y = a.y2 - (int32_t)(t * (h - 1));
+        if (i > 0) {
+            d.p1.x = prev_x;
+            d.p1.y = prev_y;
+            d.p2.x = x;
+            d.p2.y = y;
+            lv_draw_line(layer, &d);
+        }
+        prev_x = x;
+        prev_y = y;
+    }
+}
+
 static void build_chart_view(lv_obj_t *scr)
 {
     s_chart_page = lv_obj_create(scr);
@@ -1283,19 +1333,12 @@ static void build_chart_view(lv_obj_t *scr)
     lv_obj_set_style_text_color(s_chart_span, COLOR_MUTED, 0);
     lv_obj_align(s_chart_span, LV_ALIGN_TOP_MID, 0, 76);
 
-    s_chart = lv_chart_create(s_chart_page);
-    lv_obj_set_size(s_chart, 288, 160);
-    lv_obj_align(s_chart, LV_ALIGN_TOP_MID, 0, 96);
-    lv_obj_set_style_bg_opa(s_chart, LV_OPA_TRANSP, 0);      /* 无底色、无边框 */
-    lv_obj_set_style_border_width(s_chart, 0, 0);
-    lv_obj_set_style_pad_all(s_chart, 4, 0);
-    lv_obj_set_style_line_width(s_chart, 3, LV_PART_ITEMS);  /* 细线 */
-    lv_obj_set_style_line_rounded(s_chart, true, LV_PART_ITEMS);
-    lv_obj_set_style_line_opa(s_chart, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_chart_set_type(s_chart, LV_CHART_TYPE_LINE);
-    lv_chart_set_point_count(s_chart, 32);
-    lv_chart_set_div_line_count(s_chart, 0, 0);               /* 不要网格 */
-    s_chart_ser = lv_chart_add_series(s_chart, lv_color_hex(0x5AC8FA), LV_CHART_AXIS_PRIMARY_Y);
+    s_chart = lv_obj_create(s_chart_page);
+    lv_obj_remove_style_all(s_chart);
+    lv_obj_set_size(s_chart, 288, 150);
+    lv_obj_align(s_chart, LV_ALIGN_TOP_MID, 0, 100);
+    lv_obj_remove_flag(s_chart, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_chart, chart_draw_cb, LV_EVENT_DRAW_MAIN, NULL);
 
     s_chart_min = lv_label_create(s_chart_page);
     lv_label_set_text(s_chart_min, "");
@@ -1338,21 +1381,16 @@ void ui_home_show_chart(const char *entity_id, const float *vals, int n,
         hi += 1.0f;
     }
     const float pad = (hi - lo) * 0.1f;
-    float lo10 = (lo - pad) * 10.0f;
-    float hi10 = (hi + pad) * 10.0f;
-    if (lo10 < -1000000.0f) lo10 = -1000000.0f;
-    if (hi10 > 1000000.0f) hi10 = 1000000.0f;
-    if (hi10 - lo10 < 1.0f) hi10 = lo10 + 1.0f;
-    lv_chart_set_range(s_chart, LV_CHART_AXIS_PRIMARY_Y, (int32_t)lo10, (int32_t)hi10);
-    lv_chart_set_point_count(s_chart, (uint32_t)(n > 0 ? n : 1));
-    for (int i = 0; i < n; i++) {
-        lv_chart_set_next_value(s_chart, s_chart_ser, (int32_t)lroundf(vals[i] * 10.0f));
-    }
-    lv_chart_refresh(s_chart);
+    s_chart_lo = lo - pad;
+    s_chart_hi = hi + pad;
+
+    const int keep = (n > 32) ? 32 : n;
+    memcpy(s_chart_pts, vals, sizeof(float) * (size_t)keep);
+    s_chart_pts_n = keep;
+    lv_obj_invalidate(s_chart);
 
     /* 记下这次结果，60 秒内复用 */
     snprintf(s_chart_cache_entity, sizeof(s_chart_cache_entity), "%s", s_chart_entity);
-    const int keep = (n > 32) ? 32 : n;
     memcpy(s_chart_cache_vals, vals, sizeof(float) * (size_t)keep);
     s_chart_cache_n = keep;
     s_chart_cache_min = vmin;

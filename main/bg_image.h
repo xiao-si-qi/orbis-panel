@@ -39,6 +39,9 @@ void bg_image_apply_json(const char *json);
 /** @brief 卡片黑色蒙版的百分比（0-95，bg.card，默认 60）。 */
 uint8_t bg_image_card_opa_pct(void);
 
+/** @brief 暂停/恢复下载（拉历史数据时让出 TLS 与内部内存）。 */
+void bg_image_set_paused(bool paused);
+
 /** @brief 停止轮播并释放当前图像。 */
 void bg_image_stop(void);
 

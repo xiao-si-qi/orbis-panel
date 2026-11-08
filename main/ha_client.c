@@ -580,7 +580,7 @@ esp_err_t ha_client_history(const char *entity_id, int hours, float *values, int
     esp_err_t herr = ESP_FAIL;
     int hstatus = -1;
     for (int attempt = 0; attempt < 2; attempt++) {
-        if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(3000)) != pdTRUE) {
+        if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(5000)) != pdTRUE) {
             ESP_LOGW(TAG, "history: 等锁超时，放弃");
             free(buf);
             return ESP_ERR_TIMEOUT;
