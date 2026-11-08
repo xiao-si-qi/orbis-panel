@@ -89,6 +89,9 @@ static bool s_press_on_slider;   /* 本次按压是否落在滑条上 */
 /* ---- 灯 / 传感器 的子页面 ---- */
 static lv_obj_t *s_detail;                       /* 全屏子页容器 */
 static lv_obj_t *s_detail_title;
+static lv_obj_t *s_back_label;
+static lv_obj_t *s_br_lab;
+static lv_obj_t *s_ct_lab;
 static lv_obj_t *s_detail_power_sw;
 static lv_obj_t *s_detail_br_row, *s_detail_br_slider, *s_detail_br_value;
 static lv_obj_t *s_detail_ct_row, *s_detail_ct_slider, *s_detail_ct_value;
@@ -105,6 +108,7 @@ static uint32_t s_ct_override_until;
 
 /* 子页函数的前置声明（refresh_timer_cb 里会用到） */
 static void detail_apply_entity(void);
+static void detail_apply_foreground(bool dark_text);
 static uint32_t s_last_gesture_ms;   /* 最近一次手势时间，用来吃掉误触 */
 static QueueHandle_t s_cmd_q;
 
@@ -753,6 +757,25 @@ static lv_color_t kelvin_to_color(int kelvin)
     }
 }
 
+/** 根据背景亮度切换文字颜色，保证可读。 */
+static void detail_apply_foreground(bool dark_text)
+{
+    const lv_color_t fg = dark_text ? lv_color_black() : lv_color_white();
+    const lv_color_t muted = dark_text ? lv_color_hex(0x3A3A3C) : COLOR_MUTED;
+    if (s_detail_title)    lv_obj_set_style_text_color(s_detail_title, fg, 0);
+    if (s_back_label)      lv_obj_set_style_text_color(s_back_label, fg, 0);
+    if (s_br_lab)          lv_obj_set_style_text_color(s_br_lab, muted, 0);
+    if (s_ct_lab)          lv_obj_set_style_text_color(s_ct_lab, muted, 0);
+    if (s_detail_br_value) lv_obj_set_style_text_color(s_detail_br_value, fg, 0);
+    if (s_detail_ct_value) lv_obj_set_style_text_color(s_detail_ct_value, fg, 0);
+    /* 返回键底色跟着反色，避免在纯白背景上看不见 */
+    if (s_back_label && lv_obj_get_parent(s_back_label)) {
+        lv_obj_set_style_bg_color(lv_obj_get_parent(s_back_label),
+                                  dark_text ? lv_color_hex(0xE5E5EA) : lv_color_hex(0x2C2C2E), 0);
+        lv_obj_set_style_bg_opa(lv_obj_get_parent(s_back_label), LV_OPA_70, 0);
+    }
+}
+
 /** 背景氛围：按"关=黑、开=灯色 × 亮度"更新子页底色。 */
 static void detail_update_ambience(void)
 {
@@ -762,6 +785,8 @@ static void detail_update_ambience(void)
     const ha_entity_t *e = ha_client_find(s_detail_entity);
     if (e == NULL || !e->on) {
         lv_obj_set_style_bg_color(s_detail, COLOR_BG, 0);      /* 关灯：纯黑 */
+        lv_obj_set_style_bg_opa(s_detail, LV_OPA_COVER, 0);
+        detail_apply_foreground(false);
         return;
     }
     int k = (s_ct_override_until > lv_tick_get()) ? s_ct_override
@@ -772,11 +797,19 @@ static void detail_update_ambience(void)
         pct = 100;
     }
     const lv_color_t c = kelvin_to_color(k);
-    /* 亮度越低，底色越暗（最低压到 12%） */
-    const int scale = 8 + pct * 30 / 100;      /* 最高 38%：只是"灯的颜色"提示，不能盖过文字 */
-    /* lv_color_mix(c1, c2, mix)：mix=255 取 c1，mix=0 取 c2 —— 亮的时候要偏向灯色 */
-    lv_obj_set_style_bg_color(s_detail,
-                              lv_color_mix(c, COLOR_BG, (uint8_t)(scale * 255 / 100)), 0);
+
+    /* 整个页面的底色就是这只灯：色温决定颜色，亮度决定明暗（下限 4% 免得全黑看不出） */
+    int pct_eff = pct < 4 ? 4 : pct;
+    const lv_color_t bg = lv_color_make(
+        (uint8_t)(c.red * pct_eff / 100),
+        (uint8_t)(c.green * pct_eff / 100),
+        (uint8_t)(c.blue * pct_eff / 100));
+    lv_obj_set_style_bg_color(s_detail, bg, 0);
+    lv_obj_set_style_bg_opa(s_detail, LV_OPA_COVER, 0);
+
+    /* 背景亮就用黑字，背景暗就用白字 */
+    const int lum = (299 * bg.red + 587 * bg.green + 114 * bg.blue) / 1000;
+    detail_apply_foreground(lum < 150);      /* true = 用深色文字 */
 }
 
 static void detail_anim_done_cb(lv_anim_t *a);
@@ -930,7 +963,7 @@ static void build_detail_view(lv_obj_t *scr)
     lv_obj_set_size(s_detail, 360, 360);
     lv_obj_set_pos(s_detail, 0, 0);
     lv_obj_set_style_bg_color(s_detail, COLOR_BG, 0);
-    lv_obj_set_style_bg_opa(s_detail, LV_OPA_80, 0);   /* 半透明：让背景图透出来 */
+    lv_obj_set_style_bg_opa(s_detail, LV_OPA_COVER, 0);
     lv_obj_remove_flag(s_detail, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(s_detail, LV_OBJ_FLAG_HIDDEN);
 
@@ -940,9 +973,9 @@ static void build_detail_view(lv_obj_t *scr)
     lv_obj_set_style_bg_opa(back, LV_OPA_20, 0);
     lv_obj_set_style_radius(back, LV_RADIUS_CIRCLE, 0);
     lv_obj_add_event_cb(back, detail_back_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *bl = lv_label_create(back);
-    lv_label_set_text(bl, LV_SYMBOL_LEFT);
-    lv_obj_center(bl);
+    s_back_label = lv_label_create(back);
+    lv_label_set_text(s_back_label, LV_SYMBOL_LEFT);
+    lv_obj_center(s_back_label);
 
     s_detail_title = lv_label_create(s_detail);
     lv_label_set_text(s_detail_title, "--");
@@ -967,10 +1000,10 @@ static void build_detail_view(lv_obj_t *scr)
     lv_obj_remove_style_all(s_detail_br_row);
     lv_obj_set_size(s_detail_br_row, 300, 70);
     lv_obj_align(s_detail_br_row, LV_ALIGN_TOP_MID, 0, 152);
-    lv_obj_t *br_lab = lv_label_create(s_detail_br_row);
-    lv_label_set_text(br_lab, "亮度");
-    lv_obj_set_style_text_font(br_lab, &lv_font_noto_18_cjk, 0);
-    lv_obj_set_style_text_color(br_lab, COLOR_MUTED, 0);
+    s_br_lab = lv_label_create(s_detail_br_row);
+    lv_label_set_text(s_br_lab, "亮度");
+    lv_obj_set_style_text_font(s_br_lab, &lv_font_noto_18_cjk, 0);
+    lv_obj_set_style_text_color(s_br_lab, COLOR_MUTED, 0);
 
     s_detail_br_value = lv_label_create(s_detail_br_row);
     lv_label_set_text(s_detail_br_value, "--");
@@ -991,10 +1024,10 @@ static void build_detail_view(lv_obj_t *scr)
     lv_obj_remove_style_all(s_detail_ct_row);
     lv_obj_set_size(s_detail_ct_row, 208, 62);
     lv_obj_align(s_detail_ct_row, LV_ALIGN_TOP_MID, 0, 226);
-    lv_obj_t *ct_lab = lv_label_create(s_detail_ct_row);
-    lv_label_set_text(ct_lab, "色温");
-    lv_obj_set_style_text_font(ct_lab, &lv_font_noto_18_cjk, 0);
-    lv_obj_set_style_text_color(ct_lab, COLOR_MUTED, 0);
+    s_ct_lab = lv_label_create(s_detail_ct_row);
+    lv_label_set_text(s_ct_lab, "色温");
+    lv_obj_set_style_text_font(s_ct_lab, &lv_font_noto_18_cjk, 0);
+    lv_obj_set_style_text_color(s_ct_lab, COLOR_MUTED, 0);
 
     s_detail_ct_value = lv_label_create(s_detail_ct_row);
     lv_label_set_text(s_detail_ct_value, "--");
