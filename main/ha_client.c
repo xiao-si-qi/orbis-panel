@@ -178,6 +178,12 @@ static void str_copy(char *dst, size_t dst_len, const char *src)
 /** 在 [start,end) 范围内找子串 needle。 */
 static bool range_contains(const char *start, const char *end, const char *needle)
 {
+    if (start == NULL) {
+        return false;
+    }
+    if (end == NULL) {
+        end = start + strlen(start);
+    }
     const size_t nlen = strlen(needle);
     for (const char *p = start; p + nlen <= end; p++) {
         if (memcmp(p, needle, nlen) == 0) {
@@ -190,6 +196,12 @@ static bool range_contains(const char *start, const char *end, const char *needl
 /** 在 [start,end) 里找 "key": number，返回是否找到。 */
 static bool json_int_in(const char *start, const char *end, const char *key, int *out)
 {
+    if (start == NULL) {
+        return false;
+    }
+    if (end == NULL) {
+        end = start + strlen(start);
+    }
     char pattern[40];
     snprintf(pattern, sizeof(pattern), "\"%s\":", key);
     const char *p = strstr(start, pattern);
@@ -211,6 +223,12 @@ static bool json_int_in(const char *start, const char *end, const char *key, int
 
 static bool json_str_in(const char *start, const char *end, const char *key, char *out, size_t out_len)
 {
+    if (start == NULL) {
+        return false;
+    }
+    if (end == NULL) {
+        end = start + strlen(start);
+    }
     char pattern[48];
     snprintf(pattern, sizeof(pattern), "\"%s\":\"", key);
     const char *p = strstr(start, pattern);

@@ -95,6 +95,12 @@ static lv_obj_t *s_detail_br_row, *s_detail_br_slider, *s_detail_br_value;
 static lv_obj_t *s_detail_ct_row, *s_detail_ct_slider, *s_detail_ct_value;
 static bool s_detail_visible;
 static char s_detail_entity[96];
+/* 用户刚拖过滑条时，短时间内以本地值为准（HA 的轮询会慢半拍，灯关着时甚至没有 brightness） */
+static int s_br_override;
+static uint32_t s_br_override_until;
+static int s_ct_override;
+static uint32_t s_ct_override_until;
+#define OVERRIDE_MS 6000
 
 /* 子页函数的前置声明（refresh_timer_cb 里会用到） */
 static void detail_apply_entity(void);
@@ -104,6 +110,7 @@ static QueueHandle_t s_cmd_q;
 typedef struct {
     char entity[96];
     char service[12];
+    char attrs[64];      /* 非空则带参数调用（亮度/色温） */
 } cmd_t;
 
 /* ------------------------------------------------------------------------- */
@@ -667,8 +674,12 @@ static void worker_task(void *arg)
     while (true) {
         cmd_t cmd;
         if (xQueueReceive(s_cmd_q, &cmd, portMAX_DELAY) == pdTRUE) {
-            ESP_LOGI(TAG, "%s %s", cmd.service, cmd.entity);
-            ha_client_action(cmd.entity, cmd.service);
+            ESP_LOGI(TAG, "%s %s %s", cmd.service, cmd.entity, cmd.attrs);
+            if (cmd.attrs[0] != '\0') {
+                ha_client_action_attrs(cmd.entity, cmd.service, cmd.attrs);
+            } else {
+                ha_client_action(cmd.entity, cmd.service);
+            }
             vTaskDelay(pdMS_TO_TICKS(300));
             const ha_entity_t *e = ha_client_find(cmd.entity);
             if (e) {
@@ -689,13 +700,20 @@ static void detail_apply_entity(void)
     if (e == NULL) {
         return;
     }
+    ESP_LOGD(TAG, "light attrs: br=%d tint=%d k=%d range=%d-%d state=%s",
+             e->has_brightness, e->has_tint, e->color_temp_k, e->min_k, e->max_k, e->state);
     lv_label_set_text(s_detail_title, e->name);
     lv_label_set_text(s_detail_state, e->on ? "已开" : "已关");
 
     if (s_detail_br_row) {
         if (e->has_brightness) {
             lv_obj_remove_flag(s_detail_br_row, LV_OBJ_FLAG_HIDDEN);
-            const int pct = e->brightness * 100 / 255;
+            int pct = e->brightness * 100 / 255;
+            if (s_br_override_until > lv_tick_get()) {
+                pct = s_br_override;          /* 用户刚调过：先按本地值显示 */
+            } else {
+                s_br_override_until = 0;
+            }
             lv_slider_set_value(s_detail_br_slider, pct, LV_ANIM_OFF);
             char buf[16];
             snprintf(buf, sizeof(buf), "%d%%", pct);
@@ -708,7 +726,12 @@ static void detail_apply_entity(void)
         if (e->has_tint) {
             lv_obj_remove_flag(s_detail_ct_row, LV_OBJ_FLAG_HIDDEN);
             lv_slider_set_range(s_detail_ct_slider, e->min_k, e->max_k);
-            const int k = e->color_temp_k ? e->color_temp_k : (e->min_k + e->max_k) / 2;
+            int k = e->color_temp_k ? e->color_temp_k : (e->min_k + e->max_k) / 2;
+            if (s_ct_override_until > lv_tick_get()) {
+                k = s_ct_override;
+            } else {
+                s_ct_override_until = 0;
+            }
             lv_slider_set_value(s_detail_ct_slider, k, LV_ANIM_OFF);
             char buf[24];
             snprintf(buf, sizeof(buf), "%dK", k);
@@ -738,31 +761,45 @@ static void detail_slider_changed_cb(lv_event_t *e)
     if (lv_event_get_code(e) != LV_EVENT_RELEASED && lv_event_get_code(e) != LV_EVENT_PRESS_LOST) {
         return;   /* 拖动过程中只更新文字，松手才发命令 */
     }
-    if (s_detail_entity[0] == '\0') {
+    if (s_detail_entity[0] == '\0' || s_cmd_q == NULL) {
         return;
     }
-    char attrs[64];
+    cmd_t cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    snprintf(cmd.entity, sizeof(cmd.entity), "%s", s_detail_entity);
+    snprintf(cmd.service, sizeof(cmd.service), "turn_on");
     if (slider == s_detail_br_slider) {
-        snprintf(attrs, sizeof(attrs), "{\"brightness_pct\":%d}", v);
-        ha_client_action_attrs(s_detail_entity, "turn_on", attrs);
+        s_br_override = v;
+        s_br_override_until = lv_tick_get() + OVERRIDE_MS;
+        snprintf(cmd.attrs, sizeof(cmd.attrs), "{\"brightness_pct\":%d}", v);
+        lv_label_set_text(s_detail_state, "已开");     /* 乐观：调亮度会开灯 */
+        lv_label_set_text(s_detail_power_label, "关 灯");
     } else {
-        snprintf(attrs, sizeof(attrs), "{\"color_temp_kelvin\":%d}", v);
-        ha_client_action_attrs(s_detail_entity, "turn_on", attrs);
+        s_ct_override = v;
+        s_ct_override_until = lv_tick_get() + OVERRIDE_MS;
+        snprintf(cmd.attrs, sizeof(cmd.attrs), "{\"color_temp_kelvin\":%d}", v);
     }
+    xQueueSend(s_cmd_q, &cmd, 0);
 }
 
 static void detail_power_cb(lv_event_t *e)
 {
     (void)e;
-    if (s_detail_entity[0] != '\0') {
-        ha_client_action(s_detail_entity, "toggle");
-        vTaskDelay(pdMS_TO_TICKS(150));
-        const ha_entity_t *ent = ha_client_find(s_detail_entity);
-        if (ent) {
-            ha_client_refresh_at((int)(ent - ha_client_at(0)));
-        }
-        detail_apply_entity();
+    if (s_detail_entity[0] == '\0' || s_cmd_q == NULL) {
+        return;
     }
+    const ha_entity_t *ent = ha_client_find(s_detail_entity);
+    const bool now_on = (ent != NULL) && ent->on;
+
+    /* 乐观更新：先翻转界面，立刻有反馈；真正结果稍后由轮询校正 */
+    lv_label_set_text(s_detail_state, now_on ? "已关" : "已开");
+    lv_label_set_text(s_detail_power_label, now_on ? "开 灯" : "关 灯");
+
+    cmd_t cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    snprintf(cmd.entity, sizeof(cmd.entity), "%s", s_detail_entity);
+    snprintf(cmd.service, sizeof(cmd.service), "toggle");
+    xQueueSend(s_cmd_q, &cmd, 0);
 }
 
 static void detail_back_cb(lv_event_t *e)
@@ -778,7 +815,7 @@ static void build_detail_view(lv_obj_t *scr)
     lv_obj_set_size(s_detail, 360, 360);
     lv_obj_set_pos(s_detail, 0, 0);
     lv_obj_set_style_bg_color(s_detail, COLOR_BG, 0);
-    lv_obj_set_style_bg_opa(s_detail, LV_OPA_90, 0);
+    lv_obj_set_style_bg_opa(s_detail, LV_OPA_COVER, 0);   /* 新页面：完全不透明 */
     lv_obj_remove_flag(s_detail, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(s_detail, LV_OBJ_FLAG_HIDDEN);
 
