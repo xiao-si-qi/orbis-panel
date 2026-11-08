@@ -90,7 +90,6 @@ static bool s_press_on_slider;   /* 本次按压是否落在滑条上 */
 static lv_obj_t *s_detail;                       /* 全屏子页容器 */
 static lv_obj_t *s_detail_title;
 static lv_obj_t *s_detail_power_btn;
-static lv_obj_t *s_detail_power_label;
 static lv_obj_t *s_detail_br_row, *s_detail_br_slider, *s_detail_br_value;
 static lv_obj_t *s_detail_ct_row, *s_detail_ct_slider, *s_detail_ct_value;
 static bool s_detail_visible;
@@ -699,6 +698,44 @@ static void worker_task(void *arg)
 
 /* ---------------- 子页面（灯的详情） ---------------- */
 
+static lv_obj_t *s_power_ring;
+static lv_obj_t *s_power_bar;
+
+/** 用两个基本图形画电源符号：缺口圆环 + 顶部竖线。颜色随开关状态。 */
+static void power_icon_draw(lv_obj_t *parent)
+{
+    s_power_ring = lv_obj_create(parent);
+    lv_obj_remove_style_all(s_power_ring);
+    lv_obj_set_size(s_power_ring, 22, 22);
+    lv_obj_set_style_radius(s_power_ring, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(s_power_ring, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_power_ring, 3, 0);
+    lv_obj_set_style_border_color(s_power_ring, lv_color_white(), 0);
+    lv_obj_center(s_power_ring);
+    lv_obj_set_y(s_power_ring, 4);
+    lv_obj_remove_flag(s_power_ring, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    s_power_bar = lv_obj_create(parent);
+    lv_obj_remove_style_all(s_power_bar);
+    lv_obj_set_size(s_power_bar, 3, 10);
+    lv_obj_set_style_bg_opa(s_power_bar, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(s_power_bar, lv_color_white(), 0);
+    lv_obj_align(s_power_bar, LV_ALIGN_CENTER, 0, -7);
+    lv_obj_remove_flag(s_power_bar, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+}
+
+/** 开关状态 -> 图标颜色（开：白底上黑图标；关：黑底上白图标）。 */
+static void power_icon_color(bool on)
+{
+    const lv_color_t c = on ? lv_color_black() : lv_color_white();
+    if (s_power_ring) {
+        lv_obj_set_style_border_color(s_power_ring, c, 0);
+    }
+    if (s_power_bar) {
+        lv_obj_set_style_bg_color(s_power_bar, c, 0);
+    }
+}
+
 /** 开尔文转近似色（用于页面背景直观体现色温）。 */
 static lv_color_t kelvin_to_color(int kelvin)
 {
@@ -735,8 +772,9 @@ static void detail_update_ambience(void)
     const lv_color_t c = kelvin_to_color(k);
     /* 亮度越低，底色越暗（最低压到 12%） */
     const int scale = 8 + pct * 30 / 100;      /* 最高 38%：只是"灯的颜色"提示，不能盖过文字 */
+    /* lv_color_mix(c1, c2, mix)：mix=255 取 c1，mix=0 取 c2 —— 亮的时候要偏向灯色 */
     lv_obj_set_style_bg_color(s_detail,
-                              lv_color_mix(COLOR_BG, c, (uint8_t)(scale * 255 / 100)), 0);
+                              lv_color_mix(c, COLOR_BG, (uint8_t)(scale * 255 / 100)), 0);
 }
 
 static void detail_anim_done_cb(lv_anim_t *a);
@@ -754,7 +792,7 @@ static void detail_apply_entity(void)
 
     /* 不再显示"已开/已关"文字：开=白色底、关=黑色底，一眼可辨 */
     lv_obj_set_style_bg_color(s_detail_power_btn, e->on ? lv_color_white() : lv_color_hex(0x151517), 0);
-    lv_obj_set_style_text_color(s_detail_power_label, e->on ? lv_color_black() : lv_color_white(), 0);
+    power_icon_color(e->on);
     detail_update_ambience();
 
     if (s_detail_br_row) {
@@ -792,9 +830,6 @@ static void detail_apply_entity(void)
             lv_obj_add_flag(s_detail_ct_row, LV_OBJ_FLAG_HIDDEN);
         }
     }
-    if (s_detail_power_label) {
-        lv_label_set_text(s_detail_power_label, e->on ? "关 灯" : "开 灯");
-    }
 }
 
 static void detail_slider_changed_cb(lv_event_t *e)
@@ -810,6 +845,13 @@ static void detail_slider_changed_cb(lv_event_t *e)
         lv_label_set_text(s_detail_ct_value, buf);
     }
 
+    if (slider == s_detail_br_slider) {
+        s_br_override = v;
+        s_br_override_until = lv_tick_get() + OVERRIDE_MS;
+    } else {
+        s_ct_override = v;
+        s_ct_override_until = lv_tick_get() + OVERRIDE_MS;
+    }
     detail_update_ambience();   /* 拖动时底色实时跟着变 */
 
     if (lv_event_get_code(e) != LV_EVENT_RELEASED && lv_event_get_code(e) != LV_EVENT_PRESS_LOST) {
@@ -847,7 +889,7 @@ static void detail_power_cb(lv_event_t *e)
 
     /* 乐观更新：先翻转界面，立刻有反馈；真正结果稍后由轮询校正 */
     lv_obj_set_style_bg_color(s_detail_power_btn, now_on ? lv_color_hex(0x151517) : lv_color_white(), 0);
-    lv_obj_set_style_text_color(s_detail_power_label, now_on ? lv_color_white() : lv_color_black(), 0);
+    power_icon_color(!now_on);
     detail_update_ambience();
 
     cmd_t cmd;
@@ -898,10 +940,7 @@ static void build_detail_view(lv_obj_t *scr)
     lv_obj_set_style_bg_color(s_detail_power_btn, COLOR_ACCENT, 0);
     lv_obj_set_style_pad_all(s_detail_power_btn, 0, 0);
     lv_obj_add_event_cb(s_detail_power_btn, detail_power_cb, LV_EVENT_CLICKED, NULL);
-    s_detail_power_label = lv_label_create(s_detail_power_btn);
-    lv_label_set_text(s_detail_power_label, LV_SYMBOL_POWER);
-    lv_obj_set_style_text_font(s_detail_power_label, &lv_font_montserrat_28, 0);
-    lv_obj_center(s_detail_power_label);
+    power_icon_draw(s_detail_power_btn);
 
     /* 亮度 */
     s_detail_br_row = lv_obj_create(s_detail);
