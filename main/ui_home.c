@@ -145,6 +145,12 @@ static void anim_x_cb(void *var, int32_t v)
     lv_obj_set_x((lv_obj_t *)var, (lv_coord_t)v);
 }
 
+/* 位置固定、只动渲染偏移：不会被布局刷新覆盖，滑动效果也更平滑 */
+static void anim_translate_cb(void *var, int32_t v)
+{
+    lv_obj_set_style_translate_x((lv_obj_t *)var, (lv_coord_t)v, 0);
+}
+
 static void anim_done_cb(lv_anim_t *a)
 {
     lv_obj_t *out = (lv_obj_t *)a->user_data;
@@ -868,13 +874,16 @@ void ui_home_open_detail(const char *entity_id)
     detail_apply_entity();
     s_detail_visible = true;
     lv_obj_remove_flag(s_detail, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_x(s_detail, 360);
+    lv_obj_set_pos(s_detail, 0, 0);          /* 位置固定在 0 */
+    lv_obj_set_style_translate_x(s_detail, 360, 0);   /* 先移到屏幕右侧外 */
+
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, s_detail);
     lv_anim_set_values(&a, 360, 0);
     lv_anim_set_time(&a, 220);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_exec_cb(&a, anim_translate_cb);       /* ← 之前这行丢了 */
     lv_anim_set_completed_cb(&a, detail_anim_done_cb);
     lv_anim_start(&a);
     s_animating = true;
@@ -884,6 +893,17 @@ static void detail_anim_done_cb(lv_anim_t *a)
 {
     (void)a;
     s_animating = false;
+    if (s_detail != NULL) {
+        lv_area_t area;
+        lv_obj_get_coords(s_detail, &area);
+        ESP_LOGI(TAG, "detail_geom x=%d tx=%d hidden=%d idx=%d visible=%d",
+                 (int)lv_obj_get_x(s_detail),
+                 (int)lv_obj_get_style_translate_x(s_detail, 0),
+                 (int)lv_obj_has_flag(s_detail, LV_OBJ_FLAG_HIDDEN),
+                 (int)lv_obj_get_index(s_detail),
+                 (int)lv_obj_is_visible(s_detail));
+        (void)area;
+    }
 }
 
 static void detail_close_done_cb(lv_anim_t *a)
@@ -891,7 +911,8 @@ static void detail_close_done_cb(lv_anim_t *a)
     (void)a;
     if (s_detail != NULL) {
         lv_obj_add_flag(s_detail, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_x(s_detail, 0);
+        lv_obj_set_style_translate_x(s_detail, 0, 0);
+        lv_obj_set_pos(s_detail, 0, 0);
     }
     s_animating = false;
 }
@@ -906,10 +927,10 @@ void ui_home_close_detail(void)
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, s_detail);
-    lv_anim_set_values(&a, lv_obj_get_x(s_detail), 360);
+    lv_anim_set_values(&a, lv_obj_get_style_translate_x(s_detail, 0), 360);
     lv_anim_set_time(&a, 200);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
-    lv_anim_set_exec_cb(&a, anim_x_cb);
+    lv_anim_set_exec_cb(&a, anim_translate_cb);
     lv_anim_set_completed_cb(&a, detail_close_done_cb);
     lv_anim_start(&a);
 }
