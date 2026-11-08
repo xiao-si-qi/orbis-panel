@@ -25,6 +25,8 @@ typedef struct {
     int min_k, max_k;      /* 该实体支持的范围 */
     bool has_brightness;
     bool has_tint;         /* 支持色温调节 */
+    bool seen_brightness;  /* 是否拿到过真实亮度（灯关闭时 HA 不返回） */
+    bool seen_tint;
 } ha_entity_t;
 
 /** 读取 settings 里的 HA 地址/令牌，创建 HTTP 客户端。 */

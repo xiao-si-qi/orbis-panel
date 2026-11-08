@@ -392,14 +392,17 @@ static void parse_entity_object(ha_entity_t *e, const char *obj_start, const cha
     const bool has_br_attr = json_int_in(obj_start, obj_end, "brightness", &v);
     if (has_br_attr && v > 0) {
         e->brightness = v;
-    } else if (is_light) {
-        e->brightness = 255;      /* 灯关着时 HA 不给 brightness，按满亮度显示 */
+        e->seen_brightness = true;
+    } else if (is_light && !e->seen_brightness) {
+        e->brightness = 255;      /* 从没拿到过真实值，先按满亮度显示 */
     }
+    /* 灯关着时 HA 不返回 brightness：沿用上一次的值，别重置成 100% */
     e->has_brightness = has_br_attr || is_light;
 
     const bool has_ct_attr = json_int_in(obj_start, obj_end, "color_temp_kelvin", &v);
     if (has_ct_attr) {
         e->color_temp_k = v;
+        e->seen_tint = true;
     }
     /* 灯关着时 color_temp_kelvin 也会缺失，但 supported_color_modes 能说明它支持色温 */
     e->has_tint = has_ct_attr ||
