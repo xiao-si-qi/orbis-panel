@@ -228,6 +228,13 @@ static void request_visual_update(bool dim_visible, bool image_hidden)
     lv_unlock();
 }
 
+/** 淡入动画回调：lv_anim 的签名是 (void*, int32_t)，不能直接把
+    lv_obj_set_style_opa(lv_obj_t*, lv_opa_t, selector) 强转过去。 */
+static void fade_opa_cb(void *obj, int32_t opa)
+{
+    lv_obj_set_style_opa((lv_obj_t *)obj, (lv_opa_t)opa, 0);
+}
+
 static void show_cb(void *arg)
 {
     (void)arg;
@@ -254,7 +261,7 @@ static void show_cb(void *arg)
     lv_anim_set_var(&a, s_img);
     lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
     lv_anim_set_time(&a, 500);
-    lv_anim_set_exec_cb(&a, (lv_anim_exec_xcb_t)lv_obj_set_style_opa);
+    lv_anim_set_exec_cb(&a, fade_opa_cb);
     lv_anim_start(&a);
 }
 

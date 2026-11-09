@@ -95,6 +95,16 @@ esp_err_t layout_parse(const char *json, layout_t *out)
         }
     }
 
+    const cJSON *voice = cJSON_GetObjectItemCaseSensitive(root, "voice");
+    if (cJSON_IsObject(voice)) {
+        const cJSON *ven = cJSON_GetObjectItemCaseSensitive(voice, "enabled");
+        out->voice_enabled = cJSON_IsTrue(ven) || (cJSON_IsNumber(ven) && ven->valueint != 0);
+        const cJSON *vep = cJSON_GetObjectItemCaseSensitive(voice, "endpoint");
+        if (cJSON_IsString(vep)) {
+            snprintf(out->voice_endpoint, sizeof(out->voice_endpoint), "%s", vep->valuestring);
+        }
+    }
+
     const cJSON *pages = cJSON_GetObjectItemCaseSensitive(root, "pages");
     if (!cJSON_IsArray(pages)) {
         ESP_LOGE(TAG, "layout has no pages[]");

@@ -9,6 +9,7 @@ idf_component_register(
             "log_buffer.c"
             "bg_image.c"
             "bg_cache.c"
+            "xiaozhi_client.c"
         "ota.c"
         "ui_home.c"
         "bsp_display.c"
@@ -27,11 +28,11 @@ idf_component_register(
         esp_http_server
         esp_wifi
         esp_netif
-        json
+        espressif__cjson
         mbedtls
         app_update
         esp_https_ota
-        mqtt
+        espressif__mqtt
         bootloader_support
         nvs_flash
         fatfs

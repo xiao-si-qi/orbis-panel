@@ -28,12 +28,13 @@
 #include "mqtt_link.h"
 #include "ota.h"
 #include "bg_image.h"
+#include "xiaozhi_client.h"
 #include "ui_home.h"
 #include "wifi_manager.h"
 
 static const char *TAG = "ui";
 
-#define MAX_PAGES (LAYOUT_MAX_PAGES + 1) /* JSON 页 + System 页 */
+#define MAX_PAGES (LAYOUT_MAX_PAGES + 2) /* JSON 页 + System 页 + 小智 AI 页 */
 
 #define CARD_W    140
 #define CARD_H    90
@@ -177,10 +178,18 @@ static bool is_status_page(int page)
     return s_layout_valid && page == s_json_pages;
 }
 
+static bool is_voice_page(int page)
+{
+    return s_layout_valid && s_layout.voice_enabled && page == s_json_pages + 1;
+}
+
 static const char *page_title(int page)
 {
     if (is_status_page(page)) {
         return "System";
+    }
+    if (is_voice_page(page)) {
+        return "小智 AI";
     }
     return s_layout.pages[page].name;
 }
@@ -699,6 +708,58 @@ static void build_status_page(lv_obj_t *scr)
     s_pages[s_json_pages] = page;
 }
 
+static lv_obj_t *s_voice_lines[3];
+
+static void build_voice_page(lv_obj_t *scr)
+{
+    lv_obj_t *page = lv_obj_create(scr);
+    lv_obj_set_size(page, 360, 360);
+    lv_obj_set_pos(page, 0, 0);
+    lv_obj_set_style_bg_opa(page, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(page, 0, 0);
+    lv_obj_set_style_pad_all(page, 0, 0);
+    lv_obj_remove_flag(page, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *card = lv_obj_create(page);
+    lv_obj_remove_style_all(card);
+    lv_obj_set_pos(card, 32, 88);
+    lv_obj_set_size(card, 296, 150);
+    lv_obj_set_style_bg_color(card, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(card, (lv_opa_t)(bg_image_card_opa_pct() * 255 / 100), 0);
+    lv_obj_set_style_radius(card, 22, 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_border_color(card, COLOR_BORDER, 0);
+    lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    for (int i = 0; i < 3; i++) {
+        s_voice_lines[i] = lv_label_create(page);
+        lv_label_set_text(s_voice_lines[i], "--");
+        lv_obj_set_style_text_color(s_voice_lines[i], i == 0 ? COLOR_TEXT : COLOR_MUTED, 0);
+        lv_obj_set_style_text_font(s_voice_lines[i], &lv_font_noto_18_cjk, 0);
+        lv_obj_set_width(s_voice_lines[i], 264);
+        lv_obj_set_style_text_align(s_voice_lines[i], LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(s_voice_lines[i], LV_ALIGN_TOP_MID, 0, 108 + i * 40);
+    }
+
+    s_pages[s_json_pages + 1] = page;
+}
+
+/** 刷新语音页文字（配置变化或连接状态变化时调用）。 */
+static void refresh_voice_page(void)
+{
+    if (s_voice_lines[0] == NULL) {
+        return;
+    }
+    lv_label_set_text(s_voice_lines[0], s_layout.voice_enabled ? "小智 AI 已启用" : "小智 AI 未启用");
+
+    const char *ep = s_layout.voice_endpoint;
+    char pretty[LAYOUT_VOICE_ENDPOINT_MAX];
+    snprintf(pretty, sizeof(pretty), "%s", ep[0] ? ep : "未配置服务端地址");
+    lv_label_set_text(s_voice_lines[1], pretty);
+
+    lv_label_set_text(s_voice_lines[2], xiaozhi_client_status_text());
+}
+
 static void refresh_status_page(void)
 {
     if (s_sys_lines[0] == NULL) {
@@ -816,6 +877,7 @@ static void refresh_values(void)
 
 static void refresh_timer_cb(lv_timer_t *t)
 {
+    refresh_voice_page();
     if (s_detail_visible) {
         detail_apply_entity();     /* 子页数值跟着轮询刷新 */
     }
@@ -1852,9 +1914,13 @@ static void build_ui(void)
     memset(s_tiles, 0, sizeof(s_tiles));
     memset(s_page_tiles, 0, sizeof(s_page_tiles));
     memset(s_sys_lines, 0, sizeof(s_sys_lines));
+    memset(s_voice_lines, 0, sizeof(s_voice_lines));
 
     s_json_pages = s_layout.page_count;
     s_page_count = s_json_pages + 1; /* 加 System 页 */
+    if (s_layout_valid && s_layout.voice_enabled) {
+        s_page_count++;              /* 再加小智 AI 页 */
+    }
     s_title = NULL;
     s_wifi_icon = NULL;
     s_wifi_label = NULL;
@@ -1926,6 +1992,9 @@ static void build_ui(void)
 
     /* System 页 */
     build_status_page(scr);
+    if (s_layout_valid && s_layout.voice_enabled) {
+        build_voice_page(scr);
+    }
 
     /* 翻页圆点 */
     if (s_page_count > 1) {
@@ -1976,6 +2045,7 @@ static void build_ui(void)
     if (s_page < 0) {
         s_page = 0;
     }
+    refresh_voice_page();
     pages_apply_visibility();
     s_animating = false;
     ESP_LOGI(TAG, "UI built: %d page(s) + system", s_json_pages);

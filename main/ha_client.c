@@ -33,7 +33,7 @@
 static const char *TAG = "ha";
 
 #define HA_HTTP_TIMEOUT_MS  10000
-#define HA_BODY_MAX  (8 * 1024)
+#define HA_BODY_MAX  (4 * 1024)
 
 static esp_http_client_handle_t s_client;
 static SemaphoreHandle_t s_lock;

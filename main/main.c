@@ -17,6 +17,7 @@
 #include "esp_lcd_panel_ops.h"
 
 #include "app_settings.h"
+#include "xiaozhi_client.h"
 #include "bg_cache.h"
 #include "bg_image.h"
 #include "bsp_display.h"
@@ -85,6 +86,8 @@ static void network_task(void *arg)
         lv_lock();
         bsp_lvgl_set_rotation(layout->rotation);
         lv_unlock();
+        /* 开机就按上次配置去连小智服务端（没启用则什么都不做） */
+        xiaozhi_client_configure(layout->voice_enabled, layout->voice_endpoint);
         register_layout_entities(layout);
         ha_client_fetch_all();
         ui_home_apply(layout);

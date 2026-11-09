@@ -14,7 +14,7 @@
 
 static const char *TAG = "bsp_lvgl";
 
-#define BUF_LINES   20  /* 40 x 360 x 2B = 28.8KB per buffer, two buffers */
+#define BUF_LINES   10  /* 40 x 360 x 2B = 28.8KB per buffer, two buffers */
 
 static esp_lcd_panel_handle_t s_panel;
 static lv_display_t *s_disp;
@@ -76,12 +76,19 @@ esp_err_t bsp_lvgl_init(esp_lcd_panel_handle_t panel)
     }
 
     const size_t buf_bytes = BSP_LCD_H_RES * BUF_LINES * sizeof(uint16_t);
+
+    /* 必须放内部 DMA RAM：这个面板驱动用 PSRAM 指针会报
+       recycle spi transactions failed / send CASET failed。
+       省内存靠减少行数（20 -> 10，每块 7.2KB）。 */
     void *buf1 = heap_caps_malloc(buf_bytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
     void *buf2 = heap_caps_malloc(buf_bytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    const bool in_psram = false;
     if (buf1 == NULL || buf2 == NULL) {
         ESP_LOGE(TAG, "LVGL buffer alloc failed");
         return ESP_ERR_NO_MEM;
     }
+    ESP_LOGI(TAG, "LVGL 绘制缓冲在 %s（%u KB × 2）", in_psram ? "PSRAM" : "内部 RAM",
+             (unsigned)(buf_bytes / 1024));
 
     lv_display_set_buffers(s_disp, buf1, buf2, buf_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(s_disp, disp_flush_cb);

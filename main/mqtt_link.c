@@ -22,6 +22,7 @@
 #include "nvs.h"
 
 #include "app_settings.h"
+#include "xiaozhi_client.h"
 #include "bsp_lvgl.h"
 #include "bg_image.h"
 #include "bsp_display.h"
@@ -132,7 +133,7 @@ void mqtt_link_publish_meta(void)
     const app_settings_t *cfg = app_settings_get();
     const char *display = (cfg->device_name[0] != '\0') ? cfg->device_name : "圆屏";
     snprintf(json, sizeof(json),
-             "{\"type\":\"screen\",\"caps\":[\"fw\",\"rssi\",\"uptime\",\"online\",\"layout\",\"ota\",\"reboot\",\"brightness\",\"log\",\"background\",\"rotation\"],"
+             "{\"type\":\"screen\",\"caps\":[\"fw\",\"rssi\",\"uptime\",\"online\",\"layout\",\"ota\",\"reboot\",\"brightness\",\"log\",\"background\",\"rotation\",\"voice\"],"
              "\"display\":{\"w\":%d,\"h\":%d,\"formats\":[\"jpeg\"],\"fit\":[\"cover\",\"contain\"]},\"fw\":\"%s\","
              "\"name\":\"%s\",\"model\":\"JC3636W518\"}",
              360, 360, ota_current_version(), display);
@@ -174,14 +175,17 @@ static void apply_layout_json(const char *json)
             ha_client_register(tile->entity, tile->label[0] ? tile->label : NULL);
         }
     }
+    xiaozhi_client_configure(layout->voice_enabled, layout->voice_endpoint);
+
     lv_lock();
     bsp_lvgl_set_rotation(layout->rotation);
     ui_home_apply(layout);
     lv_unlock();
     bg_image_apply_json(json);      /* 背景图/轮播 */
+    const int page_count = layout->page_count;   /* 释放前先取，避免 use-after-free */
     free(layout);
     mqtt_link_publish_event("{\"ev\":\"cfg_applied\"}");
-    ESP_LOGI(TAG, "cfg applied: %d page(s)", layout->page_count);
+    ESP_LOGI(TAG, "cfg applied: %d page(s)", page_count);
 }
 
 static void handle_cmd(const char *payload)
@@ -417,8 +421,8 @@ esp_err_t mqtt_link_start(void)
         .session.last_will.qos = 0,
         .session.last_will.retain = 1,
         .session.keepalive = 30,
-        .buffer.size = 6144,
-        .buffer.out_size = 1024,
+        .buffer.size = 4096,
+        .buffer.out_size = 512,
     };
 
     s_client = esp_mqtt_client_init(&mqtt_cfg);
