@@ -22,6 +22,7 @@
 #include "nvs.h"
 
 #include "app_settings.h"
+#include "voice_audio.h"
 #include "xiaozhi_client.h"
 #include "bsp_lvgl.h"
 #include "bg_image.h"
@@ -242,7 +243,11 @@ static void handle_cmd(const char *payload)
         cJSON_Delete(root);
         return;
     }
-    if (strcmp(cmd, "reboot") == 0) {
+    if (strcmp(cmd, "audio_test") == 0) {
+        /* 调试：录 1.5 秒 → 打印峰值/均方 → 回放 */
+        int peak = 0, rms = 0;
+        voice_audio_selftest(&peak, &rms);
+    } else if (strcmp(cmd, "reboot") == 0) {
         vTaskDelay(pdMS_TO_TICKS(300));
         esp_restart();
     } else if (strcmp(cmd, "ota") == 0) {

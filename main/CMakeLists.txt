@@ -10,6 +10,7 @@ idf_component_register(
             "bg_image.c"
             "bg_cache.c"
             "xiaozhi_client.c"
+            "voice_audio.c"
         "ota.c"
         "ui_home.c"
         "bsp_display.c"
@@ -23,6 +24,7 @@ idf_component_register(
         esp_driver_gpio
         esp_driver_ledc
         esp_driver_i2c
+        esp_driver_i2s
         esp_timer
         esp_http_client
         esp_http_server

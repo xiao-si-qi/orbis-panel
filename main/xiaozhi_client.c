@@ -26,6 +26,7 @@
 #include "esp_websocket_client.h"
 
 #include "bg_image.h"
+#include "voice_audio.h"
 #include "xiaozhi_client.h"
 
 static const char *TAG = "xiaozhi";
